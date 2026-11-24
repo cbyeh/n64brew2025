@@ -44,7 +44,7 @@ static struct {
 
 gsp_state_t gsp_3d;
 static struct {
-    uint32_t proj_ver, vp_ver, geom, tex, fog;
+    uint32_t proj_ver, vp_ver, geom, tex, fog, lights_ver;
     bool valid;                         // false after a task split or a 2D draw
 } gsp_cur;
 
@@ -190,11 +190,21 @@ void gbi_mtx(const hle_mat4_t *mf, uint32_t which)
 void gsp_sync_3d(void)
 {
     uint32_t geom = gsp_3d.fog ? gsp_3d.geom | G_FOG : gsp_3d.geom;
+    if (gsp_3d.lit) geom |= G_LIGHTING;
     if (gsp_cur.valid && gsp_cur.vp_ver == gsp_3d.vp_ver && gsp_cur.proj_ver == gsp_3d.proj_ver &&
-        gsp_cur.geom == geom && gsp_cur.tex == gsp_3d.tex && (!gsp_3d.fog || gsp_cur.fog == gsp_3d.fog))
+        gsp_cur.geom == geom && gsp_cur.tex == gsp_3d.tex && (!gsp_3d.fog || gsp_cur.fog == gsp_3d.fog) &&
+        (!gsp_3d.lit || gsp_cur.lights_ver == gsp_3d.lights_ver))
         return;
-    gbi_reserve(9, 2*sizeof(gbi_mtx_t) + 16);
+    gbi_reserve(9 + 9, 2*sizeof(gbi_mtx_t) + 16 + sizeof(gsp_3d.lights));
     bool all = !gsp_cur.valid;
+    if (gsp_3d.lit && (all || gsp_cur.lights_ver != gsp_3d.lights_ver)) {
+        int n = gsp_3d.nlights;
+        uint8_t *l = gbi_alloc(16 * (n + 1));
+        memcpy(l, gsp_3d.lights, 16 * (n + 1));
+        GBI_NUMLIGHTS(n);
+        for (int i = 0; i <= n; i++) GBI_LIGHT(PhysicalAddr(l + 16 * i), i + 1);
+        gsp_cur.lights_ver = gsp_3d.lights_ver;
+    }
     if (all || gsp_cur.vp_ver != gsp_3d.vp_ver) {
         int16_t *vp = gbi_alloc(16);
         memcpy(vp, gsp_3d.vp, 16);

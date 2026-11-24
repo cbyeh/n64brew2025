@@ -38,7 +38,9 @@
 #define G_MTX_PROJECTION  0x04
 
 #define G_MW_FOG          0x08
+#define G_MW_NUMLIGHT     0x02
 #define G_MW_SEGMENT      0x06
+#define G_MV_LIGHT        10
 #define G_MV_VIEWPORT     8
 
 typedef struct { int16_t ob[3]; uint16_t flag; int16_t tc[2]; uint8_t cn[4]; } gbi_vtx_t;
@@ -52,6 +54,9 @@ typedef struct { int16_t i[16]; uint16_t f[16]; } gbi_mtx_t;
 #define GBI_TEXTURE(on, level, tile, s, t) \
     gbi(((uint32_t)G_TEXTURE << 24) | ((level) << 11) | ((tile) << 8) | ((on) << 1), ((uint32_t)(s) << 16) | (t))
 #define GBI_SEGMENT(seg, base) gbi(((uint32_t)G_MOVEWORD << 24) | (G_MW_SEGMENT << 16) | ((seg) * 4), (base))
+// F3DEX2: light n (1-based; the ambient is light count + 1) at DMEM offset n * 24 + 24
+#define GBI_NUMLIGHTS(n)       gbi(((uint32_t)G_MOVEWORD << 24) | (G_MW_NUMLIGHT << 16), (n) * 24)
+#define GBI_LIGHT(addr, n)     gbi(((uint32_t)G_MOVEMEM << 24) | (((16 - 1) / 8) << 19) | ((((n) * 24 + 24) / 8) << 8) | G_MV_LIGHT, (addr))
 #define GBI_FOG(fm, fo)         gbi(((uint32_t)G_MOVEWORD << 24) | (G_MW_FOG << 16), ((uint32_t)(uint16_t)(fm) << 16) | (uint16_t)(fo))
 
 #endif

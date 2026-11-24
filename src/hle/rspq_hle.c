@@ -1977,6 +1977,11 @@ void hle_perf_dump(uint32_t total)
     debugf("[hle]   modify other modes: %lu plain, %lu render mode (%lu memo hits), %lu mode/combine commands dropped\n",
            (unsigned long)hle_rm_calls[0], (unsigned long)hle_rm_calls[1], (unsigned long)hle_rm_calls[2], (unsigned long)hle_rm_calls[3]);
     memset(hle_rm_calls, 0, sizeof(hle_rm_calls));
+    extern uint32_t hle_vl_why[4];
+    debugf("[hle]   vertex loads: %lu fogged, %lu lit, %lu cacheable, %lu not in a model\n", (unsigned long)hle_vl_why[0],
+           (unsigned long)hle_vl_why[1], (unsigned long)hle_vl_why[2], (unsigned long)hle_vl_why[3]);
+    memset(hle_vl_why, 0, sizeof(hle_vl_why));
+    { extern uint32_t hle_lit_white, hle_lit_all; debugf("[hle]   lit vertices: %lu, %lu white\n", (unsigned long)hle_lit_all, (unsigned long)hle_lit_white); hle_lit_white = hle_lit_all = 0; }
     extern uint32_t hle_vc_hits, hle_vc_misses, hle_vc_resets, hle_vc_peak, hle_vc_strip_hits;
     debugf("[hle]   vertex cache: %lu hits, %lu strip hits, %lu misses, %lu resets, peak %lu KB\n", (unsigned long)hle_vc_hits, (unsigned long)hle_vc_strip_hits,
            (unsigned long)hle_vc_misses, (unsigned long)hle_vc_resets, (unsigned long)hle_vc_peak / 1024);

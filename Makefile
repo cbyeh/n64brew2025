@@ -11,9 +11,11 @@ include $(T3D_INST)/t3d.mk
 
 MK_ASSET=$(N64_INST)/bin/mkasset
 
-N64_C_AND_CXX_FLAGS += -Og
+N64_C_AND_CXX_FLAGS += $(if $(filter 1,$(HLE)),-O2 -fno-strict-aliasing -Wno-error=maybe-uninitialized,-Og)
 # JR_DEBUG=1: ISViewer log for emulator test runs
 N64_C_AND_CXX_FLAGS += $(if $(JR_DEBUG),-DJR_DEBUG)
+# JR_START=<scene>: start there instead of the main menu (emulator test runs)
+N64_C_AND_CXX_FLAGS += $(if $(JR_START),-DJR_START='"$(JR_START)"')
 
 all: junkrunner64.z64
 .PHONY: all
@@ -226,7 +228,7 @@ OBJS += $(BUILD_DIR)/test/autoplay.o
 $(BUILD_DIR)/test/autoplay.o: test/autoplay.c
 	@mkdir -p $(dir $@)
 	$(CC) -c $(CFLAGS) -DJR_AUTOPLAY='"$(JR_AUTOPLAY)"' -o $@ $<
-N64_LDFLAGS += $(foreach f,joypad_poll joypad_get_buttons joypad_get_buttons_held joypad_get_buttons_pressed joypad_get_buttons_released joypad_get_inputs,--wrap $(f))
+N64_LDFLAGS += $(foreach f,display_try_get joypad_poll joypad_get_buttons joypad_get_buttons_held joypad_get_buttons_pressed joypad_get_buttons_released joypad_get_inputs,--wrap $(f))
 endif
 
 ###

@@ -69,7 +69,9 @@ void setup() {
     fade_effect_set((color_t){0, 0, 0, 255}, 0.0f);
     fade_effect_set((color_t){0, 0, 0, 0}, 3.0f);
 
-#if ENABLE_CHEATS
+#if defined(JR_START)
+    scene_queue_next(JR_START);     // test aid: make JR_START=rom:/scenes/overworld.scene#default
+#elif ENABLE_CHEATS
     scene_queue_next("rom:/scenes/level_select.scene#default");
 #else
     scene_queue_next("rom:/scenes/overworld.scene#main_menu");

@@ -407,9 +407,9 @@ __attribute__((always_inline)) static inline void vert_copy(uint32_t *o, const u
 // converted each time. The pool is only reused between tasks: the plugin reads a task's
 // vertices when it is submitted.
 
-#define VC_BYTES    (256 * 1024)
+#define VC_BYTES    (is_memory_expanded() ? 1024 * 1024 : 256 * 1024)   // converted vertices kept
 #define VC_SLOTS    1024                // power of 2
-#define VC_MODELS   256
+#define VC_MODELS   2048                // Junk Runner's overworld keeps ~300-1000 meshes loaded
 
 typedef struct {
     uint32_t src, uv, amb, out, bytes;  // strips: uv = amb = VC_STRIP
@@ -444,8 +444,15 @@ static void vc_reset_later(void)
     vc_task = gsp_tasks;
 }
 
+#ifdef HLE_TEST_PERF
+uint32_t hle_lit_white, hle_lit_all;
+uint32_t hle_vl_why[4];     // test aid: vertex loads that were fogged, lit, cacheable, not in a model
+#endif
 void hle_vcache_model(const void *data, uint32_t bytes, bool add)
 {
+#ifdef HLE_TEST_PERF
+    if (add && vc_nmodels == VC_MODELS) hle_warn_once("vcmodels", "vertex cache: more than %d models", VC_MODELS);
+#endif
     uint32_t lo = PhysicalAddr(data), hi = lo + bytes;
     for (int i = 0; i < vc_nmodels; i++) {
         if (vc_models[i].lo != lo) continue;
@@ -498,9 +505,10 @@ static vc_ent_t *vc_find(uint32_t src, uint32_t bytes, uint32_t uv, uint32_t amb
 
 static uint32_t *vc_alloc(int bytes)
 {
-    if (!vc_pool) vc_pool = malloc_uncached(VC_BYTES);
+    static uint32_t vc_bytes;
+    if (!vc_pool) { vc_bytes = VC_BYTES; vc_pool = malloc_uncached(vc_bytes); }
     bytes = (bytes + 15) & ~15;
-    if (!vc_pool || vc_used + bytes > VC_BYTES) {
+    if (!vc_pool || vc_used + bytes > vc_bytes) {
 #ifdef HLE_TEST_PERF
         hle_vc_resets++;
 #endif
@@ -550,6 +558,54 @@ static void light_setup(void)
     }
 }
 
+/**
+ * The same lights as F3DEX2 Light structs for the plugin, which lights a vertex as
+ * ambient + sum of max(0, n.L) * colour like Tiny3D, but ignores the vertex colour: so
+ * it is used only for loads whose vertices are all white (98% of the lit ones here).
+ * False if a point light is on (CPU path).
+ */
+static bool lights_gbi(void)
+{
+    uint8_t l[sizeof(gsp_3d.lights)] = {0};
+    int n = VDMEM8(D(ACTIVE_LIGHT_SIZE)) / 16;
+    if (n > 7) return false;
+    for (int i = 0; i < n; i++) {
+        const uint8_t *t = VDMEM_PTR(D(LIGHT_DIR_COLOR) + i * 16);
+        if (t[15]) return false;
+        uint8_t *g = l + i * 16;
+        g[0] = g[4] = t[0]; g[1] = g[5] = t[1]; g[2] = g[6] = t[2];
+        g[8] = t[8]; g[9] = t[9]; g[10] = t[10];
+    }
+    const uint8_t *amb = VDMEM_PTR(D(COLOR_AMBIENT));
+    uint8_t *g = l + n * 16;
+    g[0] = g[4] = amb[0]; g[1] = g[5] = amb[1]; g[2] = g[6] = amb[2];
+    if (n != gsp_3d.nlights || memcmp(l, gsp_3d.lights, 16 * (n + 1))) {
+        memcpy(gsp_3d.lights, l, 16 * (n + 1));
+        gsp_3d.nlights = n;
+        gsp_3d.lights_ver++;
+    }
+    return true;
+}
+
+static bool load_white(const T3DVertPacked *src, int count)
+{
+    const uint32_t *in = (const uint32_t*)src;
+    for (int i = 0; i < count; i += 2, in += 8)
+        if ((in[4] & in[5]) < 0xFFFFFF00) return false;
+    return true;
+}
+
+/** Puts the normals where GBI lighting reads them (colour bytes 0-2), keeping the alpha. */
+static void vert_normals(uint32_t *o, const uint32_t *in, int count)
+{
+    for (int i = 0; i < count; i += 2, in += 8, o += 8)
+        for (int v = 0; v < 2; v++) {
+            int16_t pn = (int16_t)(in[1 + 2*v] & 0xFFFF);      // 5.6.5 -> s8
+            uint8_t *cn = (uint8_t*)&o[3 + 4*v];
+            cn[0] = (pn >> 11) * 8; cn[1] = ((int16_t)(pn << 5) >> 10) * 4; cn[2] = ((int16_t)(pn << 11) >> 11) * 8;
+        }
+}
+
 /** Lights the colours of a converted load in place (o: gbi_vtx_t pairs, in: T3DVertPacked). */
 static void vert_light(uint32_t *o, const uint32_t *in, int count, bool keep_alpha)
 {
@@ -568,6 +624,9 @@ static void vert_light(uint32_t *o, const uint32_t *in, int count, bool keep_alp
                 for (int c = 0; c < 4; c++) acc[c] += d * lt.col[k][c];
             }
             uint8_t *cn = (uint8_t*)&o[3 + 4*v];
+#ifdef HLE_TEST_PERF
+            { extern uint32_t hle_lit_white, hle_lit_all; hle_lit_all++; hle_lit_white += cn[0] == 255 && cn[1] == 255 && cn[2] == 255; }
+#endif
             for (int c = 0; c < (keep_alpha ? 3 : 4); c++) {
                 int a = acc[c] >= 255.0f ? 255 : (int)acc[c];
                 cn[c] = cn[c] * a / 255;
@@ -578,7 +637,7 @@ static void vert_light(uint32_t *o, const uint32_t *in, int count, bool keep_alp
 
 /** The copy for a vertex load not in the cache (kept apart so the hit path stays light). */
 __attribute__((noinline)) static void vert_load_copy(int dest, int count, const T3DVertPacked *src, vc_ent_t *e,
-                                                    uint32_t uv_ofs, bool scale, uint32_t amb, bool fog, const int64_t *k, bool lit)
+                                                    uint32_t uv_ofs, bool scale, uint32_t amb, bool fog, const int64_t *k, bool lit, bool normals)
 {
 #ifdef HLE_TEST_PERF
     uint32_t _vl = TICKS_READ();
@@ -620,6 +679,7 @@ __attribute__((noinline)) static void vert_load_copy(int dest, int count, const 
     default: vert_copy(out, in, count, true, true,  true,  uv_s, uv_t, amb_tbl, k); break;
     }
     if (lit) vert_light(out, in, count, fog_enabled());
+    if (normals) vert_normals(out, in, count);
 #ifdef HLE_TEST_T3D_EXACT   // test aid: the loop as it was, on the same input: every word must match
     {
         extern uint32_t hle_exact_calls, hle_exact_bad;
@@ -673,8 +733,13 @@ __attribute__((noinline)) static void vert_load(const uint32_t *a)
 
     bool unlit = VDMEM8(D(TRI_COMMAND)) & 1;
     uint32_t amb = VDMEM32(D(COLOR_AMBIENT));
-    bool lit = !unlit && VDMEM8(D(ACTIVE_LIGHT_SIZE));
+    // a white ambient saturates the light sum (colour * min(255, 255 + ...)): nothing to light
+    bool lit = !unlit && VDMEM8(D(ACTIVE_LIGHT_SIZE)) && amb != 0xFFFFFFFF;
     bool scale = !unlit && !lit && amb != 0xFFFFFFFF;
+    // white vertices: the plugin lights them (cacheable); others are lit here
+    bool normals = lit && lights_gbi() && load_white(src, count);
+    if (normals) { lit = false; hle_rp_bad(); }     // the lights change between frames
+    gsp_3d.lit = normals;
     if (lit) light_setup();
 
     VL_MARK(4);
@@ -691,9 +756,14 @@ __attribute__((noinline)) static void vert_load(const uint32_t *a)
 #ifdef HLE_NO_VCACHE    // test aid: copy every load
     vc_ent_t *e = NULL;
 #else
-    vc_ent_t *e = (fog || lit) ? NULL : vc_find(PhysicalAddr(src), count * sizeof(gbi_vtx_t), uv_ofs, scale ? amb : 0xFFFFFFFF);
+    vc_ent_t *e = (fog || lit) ? NULL : vc_find(PhysicalAddr(src), count * sizeof(gbi_vtx_t), uv_ofs,
+                                                normals ? 0xFFFFFFFE : scale ? amb : 0xFFFFFFFF);   // FFFFFFFE: normals
 #endif
     VL_MARK(6);
+#ifdef HLE_TEST_PERF
+    { extern uint32_t hle_vl_why[4]; hle_vl_why[fog ? 0 : lit ? 1 : e ? 2 : 3]++;
+}
+#endif
     if (e && e->out) {
         t3d_begin(2, 0);
         VL_MARK(7);
@@ -705,7 +775,7 @@ __attribute__((noinline)) static void vert_load(const uint32_t *a)
 #endif
         return;
     }
-    vert_load_copy(dest, count, src, e, uv_ofs, scale, amb, fog, k, lit);
+    vert_load_copy(dest, count, src, e, uv_ofs, scale, amb, fog, k, lit, normals);
 }
 
 // Triangles are paired into G_TRI2, also across commands: hle_t3d_flush() is

@@ -4,7 +4,7 @@
  *
  * A script is a list of "start-end:keys[@x,y]" steps in polled frames (joypad_poll calls),
  * e.g. "1900-1905:A;2400-2600:@0,80". Keys: A B Z S(tart) L R and u d l r (D-pad).
- * Later steps win where they overlap. Every second the frame and time go to the log.
+ * Later steps win where they overlap. Every emulated second the frame rate goes to the log.
  */
 #include <libdragon.h>
 #include <stdlib.h>
@@ -42,10 +42,39 @@ static void parse(void) {
     }
 }
 
+// Speed: rendered frames per 60 VIs (one emulated second), logged every second
+static volatile int vis;
+static int renders, vis_last;
+static void on_vi(void) { vis++; }
+
+surface_t *__real_display_try_get(void);
+surface_t *__wrap_display_try_get(void) {
+    surface_t *s = __real_display_try_get();
+    if (s) renders++;
+    return s;
+}
+
 void __real_joypad_poll(void);
 void __wrap_joypad_poll(void) {
     __real_joypad_poll();
-    if (step_count < 0) parse();
+    if (step_count < 0) { parse(); register_VI_handler(on_vi); vis_last = vis; }
+    if (vis - vis_last >= 60) {
+        debugf("[fps] %d frames in %d VIs at step %d\n", renders, vis - vis_last, frame);
+        renders = 0; vis_last = vis;
+#ifdef HLE_TEST_PERF    // HLE backend profile every 4 emulated seconds
+        static uint32_t start; static int secs;
+        if (++secs % 4 == 0) {
+            extern uint32_t __hle_perf_ticks;
+            extern void hle_perf_dump(uint32_t total);
+            uint32_t now = TICKS_READ();
+            if (start) {
+                debugf("[hle] perf: rsp-hle %lu%% of CPU time\n", (unsigned long)(__hle_perf_ticks * 100ULL / (now - start)));
+                hle_perf_dump(now - start);
+            }
+            __hle_perf_ticks = 0; start = now;
+        }
+#endif
+    }
     frame++;
     prev = held;
     held = (joypad_buttons_t){0};
@@ -55,7 +84,6 @@ void __wrap_joypad_poll(void) {
         held.raw |= steps[i].keys.raw;
         if (steps[i].x || steps[i].y) { stick_x = steps[i].x; stick_y = steps[i].y; }
     }
-    if (frame % 60 == 0) debugf("[autoplay] frame %d t %lu ms\n", frame, (unsigned long)TICKS_TO_MS(get_ticks()));
 }
 
 joypad_buttons_t __wrap_joypad_get_buttons(joypad_port_t port) { return port ? (joypad_buttons_t){0} : held; }

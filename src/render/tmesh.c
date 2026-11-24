@@ -1,4 +1,7 @@
 #include "tmesh.h"
+#ifdef HLE_BUILD
+#include "hle.h"
+#endif
 
 #include "../resource/material_cache.h"
 #include "../resource/sprite_cache.h"
@@ -109,6 +112,9 @@ void tmesh_load(struct tmesh* tmesh, FILE* file) {
     tmesh->vertices = malloc(sizeof(T3DVertPacked) * tmesh->vertex_count);
     fread(&tmesh->vertices[0], sizeof(T3DVertPacked), tmesh->vertex_count, file);
     data_cache_hit_writeback(&tmesh->vertices[0], sizeof(T3DVertPacked) * tmesh->vertex_count);
+#ifdef HLE_BUILD
+    hle_vcache_model(tmesh->vertices, sizeof(T3DVertPacked) * tmesh->vertex_count, true);   // converted once, reused
+#endif
 
     // load material transitions
 
@@ -232,6 +238,9 @@ void tmesh_load_filename(struct tmesh* tmesh, const char* filename) {
 
 void tmesh_release(struct tmesh* tmesh) {
     rspq_block_free(tmesh->block);
+#ifdef HLE_BUILD
+    hle_vcache_model(tmesh->vertices, 0, false);
+#endif
     free(tmesh->vertices);
 
     if (tmesh->material) {

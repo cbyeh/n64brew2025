@@ -56,6 +56,8 @@ extern uint32_t __vrsp_state_start, __vrsp_state_end;   ///< the current overlay
 /** Z-buffer clear (vrdp.c) */
 void vrdp_clear_z(uint32_t zaddr, uint32_t size, uint16_t value);
 
+/** Registers (add) or drops vertex data the game keeps unchanged, so its converted copy is reused (ovl_t3d.c). */
+void hle_vcache_model(const void *data, uint32_t bytes, bool add);
 /** Tiny3D state shared with tinypx (ovl_t3d.c). */
 void hle_t3d_matrices(const float (**proj)[4], const float (**mv)[4]);
 /** out = l * r (column-major; out may alias l or r). */
@@ -112,6 +114,10 @@ typedef struct {
     uint32_t geom;          ///< F3DEX2 geometry mode
     uint32_t tex;           ///< G_TEXTURE w0 low bits (0 = off)
     uint32_t fog;           ///< G_MW_FOG word with G_FOG set (0 = off)
+    bool lit;               ///< G_LIGHTING for the next G_VTX (the plugin lights the vertices)
+    uint8_t lights[8 * 16]; ///< F3DEX2 Light structs: directional lights, then the ambient
+    int nlights;            ///< directional lights in `lights`
+    uint32_t lights_ver;    ///< bump when `lights` changes
 } gsp_state_t;
 
 extern gsp_state_t gsp_3d;
