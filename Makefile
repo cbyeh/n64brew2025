@@ -216,9 +216,42 @@ build/blender_results.txt: $(EXPORT_SOURCE)
 # source code
 ###
 
-SOURCES := $(shell find src/ ! -name '*_test.c' ! -name 'main.c' ! -name 'inventory_mapping.c' -type f -name '*.c' | sort) src/player/inventory_mapping.c
+SOURCES := $(shell find src/ ! -path 'src/hle/*' ! -name '*_test.c' ! -name 'main.c' ! -name 'inventory_mapping.c' -type f -name '*.c' | sort) src/player/inventory_mapping.c
 SOURCE_OBJS := $(SOURCES:src/%.c=$(BUILD_DIR)/%.o)
 OBJS := $(BUILD_DIR)/main.o $(SOURCE_OBJS)
+
+###
+# HLE build (HLE=1): junkrunner64-hle.z64 for high-level-emulation emulators (Delta,
+# Mupen64Plus with GLideN64 + rsp-hle). It does not run on real hardware or accurate
+# emulators. src/hle/ is Pandemonium's HLE backend (github.com/cbyeh/Pandemonium, hle/).
+###
+
+ifeq ($(HLE),1)
+# CPU replacement of the RSP (src/hle/rspq_hle.c replaces libdragon's rspq.o at link time)
+HLE_SOURCES := $(wildcard src/hle/*.c) $(wildcard src/hle/*.S)
+OBJS += $(patsubst src/%,$(BUILD_DIR)/%.o,$(basename $(HLE_SOURCES)))
+N64_ASFLAGS += -Isrc/hle/internal
+N64_C_AND_CXX_FLAGS += $(HLE_EXTRA_CFLAGS) -DHLE_BUILD -Isrc/hle -Isrc/hle/internal -Isrc/hle/internal/rspq -I$(T3D_INST)/src/t3d
+N64_LDFLAGS += --wrap sys_hw_memset --wrap sys_hw_memset16 --wrap sys_hw_memset32 --wrap sys_hw_memset64
+# Z clears without a mid-frame SYNC_FULL (src/hle/clearz_hle.c)
+N64_LDFLAGS += --wrap __rdpq_clear_z $(HLE_EXTRA_LDFLAGS)
+# Models register their vertices with the converted-vertex cache (src/hle/ovl_t3d.c)
+N64_LDFLAGS += --wrap t3d_model_load --wrap t3d_model_free
+# libdragon IPL3 patched to boot on emulators without RDRAM chip emulation (src/hle/ipl3/)
+junkrunner64-hle.z64: N64_ROM_HEADER=src/hle/ipl3/ipl3_hle.z64
+junkrunner64-hle.z64: N64_ROM_TITLE="Junk Runner 64 HLE"
+# Region-free ROMs have country code 0, which Delta treats as PAL (50 Hz pacing): declare NTSC
+junkrunner64-hle.z64: N64_ROM_REGIONFREE=
+# The backend is hot code: optimize it even though the game builds with -Og (last flag wins)
+$(BUILD_DIR)/hle/%.o: CFLAGS += -O2 -std=gnu2x
+junkrunner64-hle.z64: $(BUILD_DIR)/junkrunner64.dfs
+# Delta's 2019 core halts on libdragon's EMUX probe opcodes: patch them out after linking
+junkrunner64-hle.z64: $(BUILD_DIR)/junkrunner64-hle.elf.emux
+$(BUILD_DIR)/junkrunner64-hle.elf.emux: $(BUILD_DIR)/junkrunner64-hle.elf
+	python3 src/hle/tools/patch_emux.py $<
+	@touch $@
+$(BUILD_DIR)/junkrunner64-hle.elf: $(OBJS)
+endif
 
 TEST_SOURCES := $(shell find src/ -type f -name '*_test.c' | sort)
 TEST_SOURCE_OBJS := $(TEST_SOURCES:src/%.c=$(BUILD_DIR)/%.o)
