@@ -6,6 +6,7 @@
 #include "../time/time.h"
 #include "../config.h"
 #include "../util/rspq.h"
+#include "../math/matrix.h"
 
 void material_init(struct material* material) {
     material->block = 0;
@@ -214,7 +215,23 @@ struct mat_def_cmd {
     };
 };
 
+// Material blocks are recorded at load, so fog is fitted to a reference projection (the default
+// camera). shortcut: the near plane moves at runtime (0.3-1.8), shifting fog by up to ~2x that;
+// fit per frame outside the blocks if it shows.
+static void material_fog_viewport() {
+    static T3DViewport viewport;
+    static bool ready;
+    if (!ready) {
+        viewport = t3d_viewport_create();
+        matrixPerspective(viewport.matProj.m, -1.0f, 1.0f, 1.0f, -1.0f,
+            WORLD_NEAR_PLANE * WORLD_SCALE, WORLD_FAR_PLANE * WORLD_SCALE);
+        ready = true;
+    }
+    t3d_viewport_attach(&viewport);
+}
+
 void material_load(struct material* into, FILE* material_file) {
+    material_fog_viewport();
     int header;
     fread(&header, 1, 4, material_file);
     assert(header == EXPECTED_HEADER);
@@ -463,7 +480,9 @@ void material_load(struct material* into, FILE* material_file) {
                 t3d_fog_set_enabled(cmd->set_fog_enabled);
                 break;
             case MAT_DEF_CMD_SET_FOG_RANGE:
-                t3d_fog_set_range(cmd->set_fog_range.min * WORLD_SCALE, cmd->set_fog_range.max * WORLD_SCALE);
+                // tiny3d >= 2026-09-28: the range is mapped through the attached projection
+                // and is half what it was, so double it (see material_fog_viewport)
+                t3d_fog_set_range(cmd->set_fog_range.min * WORLD_SCALE * 2.0f, cmd->set_fog_range.max * WORLD_SCALE * 2.0f);
                 break;
             case MAT_DEF_CMD_SET_LIGHT_COUNT:
                 t3d_light_set_count(cmd->light_count);

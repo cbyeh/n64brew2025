@@ -52,7 +52,7 @@ void load_scene_or_repair(const char* filename) {
 }
 
 void setup() {
-#if DEBUG_ENABLED
+#if DEBUG_ENABLED || defined(JR_DEBUG)
     debug_init_isviewer();
 #endif
     // rdpq_debug_start();

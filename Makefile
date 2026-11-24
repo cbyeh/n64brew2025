@@ -12,6 +12,8 @@ include $(T3D_INST)/t3d.mk
 MK_ASSET=$(N64_INST)/bin/mkasset
 
 N64_C_AND_CXX_FLAGS += -Og
+# JR_DEBUG=1: ISViewer log for emulator test runs
+N64_C_AND_CXX_FLAGS += $(if $(JR_DEBUG),-DJR_DEBUG)
 
 all: junkrunner64.z64
 .PHONY: all
