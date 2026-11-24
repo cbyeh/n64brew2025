@@ -503,6 +503,23 @@ static vc_ent_t *vc_find(uint32_t src, uint32_t bytes, uint32_t uv, uint32_t amb
     return NULL;
 }
 
+/** vc_find for data known not to change (no model check). */
+static vc_ent_t *vc_find_any(uint32_t src, uint32_t bytes, uint32_t key)
+{
+    if (vc_reset_pending && vc_task != gsp_tasks) { vc_used = 0; vc_reset_pending = false; vc_gen_n++; }
+    uint32_t h = ((src >> 4) * 2654435761u) >> 22;
+    for (int n = 0; n < 8; n++, h = (h + 1) & (VC_SLOTS - 1)) {
+        vc_ent_t *e = &vc_tab[h];
+        if (!e->out) {
+            if (vc_reset_pending) return NULL;
+            e->src = src; e->uv = key; e->amb = key; e->bytes = bytes;
+            return e;
+        }
+        if (e->src == src && e->uv == key && e->amb == key && e->bytes == bytes) return e;
+    }
+    return NULL;
+}
+
 static uint32_t *vc_alloc(int bytes)
 {
     static uint32_t vc_bytes;
@@ -946,7 +963,50 @@ void hle_t3d_matrices(const float (**proj)[4], const float (**mv)[4])
     *mv = mat_mv;
 }
 
+// Runs of single triangles inside recorded blocks (which never change) are converted once
+// and called as a list after that, like strips. VC_TRIS: their cache key.
+#define VC_TRIS     0xFFFFFFFD
+int hle_block_depth;                    // > 0: executing a block (rspq_hle.c)
+static bool tris_blocks_cached;
+void hle_tris_block_gone(void)
+{
+    if (tris_blocks_cached) { vc_reset_later(); tris_blocks_cached = false; }
+}
+
+static int tri_run_convert(const uint32_t *a, uint32_t cmd_byte);
+
 int hle_t3d_tri_run(const uint32_t *a, uint32_t cmd_byte)
+{
+#ifndef HLE_NO_VCACHE
+    if (hle_block_depth > 0) {
+        const uint32_t *p = a;
+        while ((p[0] >> 24) == cmd_byte) p += 2;
+        int bytes = (p - a) * 4, n = bytes / 8;
+        vc_ent_t *ce = vc_find_any(PhysicalAddr(a), bytes, VC_TRIS);
+        if (ce) {
+            t3d_begin(n / 2 + 4, 0);
+            if (ce->out) { gbi((uint32_t)G_DL << 24, ce->out); return bytes; }
+            hle_t3d_flush();
+            uint64_t *dl_start = __gbi_ptr;
+            tri_run_convert(a, cmd_byte);
+            hle_t3d_flush();
+            int m = __gbi_ptr - dl_start;
+            uint64_t *dst = (uint64_t*)vc_alloc((m + 1) * 8);
+            if (!dst) { ce->src = 0; return bytes; }    // already emitted in place
+            memcpy(dst, dl_start, m * 8);
+            dst[m] = (uint64_t)G_ENDDL << 56;
+            __gbi_ptr = dl_start;
+            ce->out = PhysicalAddr(dst);
+            tris_blocks_cached = true;
+            gbi((uint32_t)G_DL << 24, ce->out);
+            return bytes;
+        }
+    }
+#endif
+    return tri_run_convert(a, cmd_byte);
+}
+
+static int tri_run_convert(const uint32_t *a, uint32_t cmd_byte)
 {
     // the ucode feeds RDPQ_Triangle with (v0, v2, v1)
     const uint32_t *p = a;

@@ -246,6 +246,9 @@ HLE_SOURCES := $(filter-out src/hle/rspq_hle.c src/hle/vrdp.c src/hle/ovl_%.c sr
 endif
 OBJS += $(patsubst src/%,$(BUILD_DIR)/%.o,$(basename $(HLE_SOURCES)))
 N64_ASFLAGS += -Isrc/hle/internal
+# Block replay costs more than it saves here (overworld 10 -> 14 fps without it); the
+# overworld's near fade fits G_FOG within 15% alpha, so the plugin does the fog
+N64_C_AND_CXX_FLAGS += -DHLE_NO_REPLAY -DHLE_FOG_GBI_ERR=0.16f
 N64_C_AND_CXX_FLAGS += $(HLE_EXTRA_CFLAGS) -DHLE_BUILD -Isrc/hle -Isrc/hle/internal -Isrc/hle/internal/rspq -I$(T3D_INST)/src/t3d
 N64_LDFLAGS += --wrap sys_hw_memset --wrap sys_hw_memset16 --wrap sys_hw_memset32 --wrap sys_hw_memset64
 # Z clears without a mid-frame SYNC_FULL (src/hle/clearz_hle.c)

@@ -1304,6 +1304,7 @@ void rspq_block_begin_reuse(rspq_block_t *reuse_block)
     } else {
         block = reuse_block;
         hle_replay_block_gone(block->cmds);
+        hle_tris_block_gone();
         rspq_block_free_atexit_chain(block);
         block->nesting_level = 0;
         block->min_ph_level = RSPQ_MAX_BLOCK_NESTING_LEVEL;
@@ -1352,6 +1353,7 @@ rspq_block_t* rspq_block_end(void)
 void rspq_block_free(rspq_block_t *block)
 {
     hle_replay_block_gone(block->cmds);
+    hle_tris_block_gone();
     // Free RDP blocks first
     __rdpq_block_free(block->rdp_block);
 
@@ -2036,6 +2038,7 @@ static void vrsp_run(void)
                 next = a0 & 0xFFFFFF;
                 break;
             case RSPQ_CMD_CALL: {
+                extern int hle_block_depth;
                 uint32_t target = a0 & 0xFFFFFF;
                 bool placeholder = (int32_t)a[1] < 0;
                 if (placeholder) {          // placeholder: target read from DMEM
@@ -2046,8 +2049,10 @@ static void vrsp_run(void)
                 PSTACK(slot) = next;
                 hle_rp_pstack(slot);
                 // a recorded block starting from a state seen before: its output is copied
-                if (placeholder || !hle_replay_call(target, slot))
+                if (placeholder || !hle_replay_call(target, slot)) {
                     next = target;
+                    hle_block_depth++;
+                }
 #ifdef HLE_TEST_PERF    // test aid: time spent inside recorded blocks
                 {
                     extern uint32_t hle_blk_addr[512], hle_blk_mask, hle_blk_t0, hle_blk_ticks, hle_blk_calls; extern int hle_blk_n;
@@ -2059,7 +2064,9 @@ static void vrsp_run(void)
 #endif
                 break;
             }
-            case RSPQ_CMD_RET:
+            case RSPQ_CMD_RET: {
+                extern int hle_block_depth;
+                if (hle_block_depth > 0) hle_block_depth--;
                 next = PSTACK((a0 & 0xFFC) >> 2) & 0xFFFFFF;
                 hle_replay_ret((a0 & 0xFFC) >> 2);
 #ifdef HLE_TEST_PERF
@@ -2070,6 +2077,7 @@ static void vrsp_run(void)
                 }
 #endif
                 break;
+            }
             case RSPQ_CMD_DMA: {
                 hle_rp_bad();
                 uint8_t *dmem = vrsp_dmem_addr(a[1]);
