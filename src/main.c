@@ -37,6 +37,9 @@
 #define RDPQ_VALIDATE_DETACH_ADDR    0x00800000
 
 void load_scene_or_repair(const char* filename) {
+#ifdef JR_DEBUG
+    debugf("[scene] load %s\n", filename);
+#endif
     if (main_menu_enable_scene_saving) {
         savefile_set_last_scene(filename, scene_get_next_entry());
     }

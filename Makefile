@@ -220,6 +220,15 @@ SOURCES := $(shell find src/ ! -path 'src/hle/*' ! -name '*_test.c' ! -name 'mai
 SOURCE_OBJS := $(SOURCES:src/%.c=$(BUILD_DIR)/%.o)
 OBJS := $(BUILD_DIR)/main.o $(SOURCE_OBJS)
 
+# Test aid: scripted input (test/autoplay.c), e.g. JR_AUTOPLAY="1900-1905:A;2400-2600:@0,80"
+ifneq ($(JR_AUTOPLAY),)
+OBJS += $(BUILD_DIR)/test/autoplay.o
+$(BUILD_DIR)/test/autoplay.o: test/autoplay.c
+	@mkdir -p $(dir $@)
+	$(CC) -c $(CFLAGS) -DJR_AUTOPLAY='"$(JR_AUTOPLAY)"' -o $@ $<
+N64_LDFLAGS += $(foreach f,joypad_poll joypad_get_buttons joypad_get_buttons_held joypad_get_buttons_pressed joypad_get_buttons_released joypad_get_inputs,--wrap $(f))
+endif
+
 ###
 # HLE build (HLE=1): junkrunner64-hle.z64 for high-level-emulation emulators (Delta,
 # Mupen64Plus with GLideN64 + rsp-hle). It does not run on real hardware or accurate
@@ -229,14 +238,20 @@ OBJS := $(BUILD_DIR)/main.o $(SOURCE_OBJS)
 ifeq ($(HLE),1)
 # CPU replacement of the RSP (src/hle/rspq_hle.c replaces libdragon's rspq.o at link time)
 HLE_SOURCES := $(wildcard src/hle/*.c) $(wildcard src/hle/*.S)
+ifeq ($(HLE_BOOTFIX_ONLY),1)
+# Test aid: only the emulator boot fixes, real RSP microcode (for LLE reference runs)
+HLE_SOURCES := $(filter-out src/hle/rspq_hle.c src/hle/vrdp.c src/hle/ovl_%.c src/hle/replay.c,$(HLE_SOURCES))
+endif
 OBJS += $(patsubst src/%,$(BUILD_DIR)/%.o,$(basename $(HLE_SOURCES)))
 N64_ASFLAGS += -Isrc/hle/internal
 N64_C_AND_CXX_FLAGS += $(HLE_EXTRA_CFLAGS) -DHLE_BUILD -Isrc/hle -Isrc/hle/internal -Isrc/hle/internal/rspq -I$(T3D_INST)/src/t3d
 N64_LDFLAGS += --wrap sys_hw_memset --wrap sys_hw_memset16 --wrap sys_hw_memset32 --wrap sys_hw_memset64
 # Z clears without a mid-frame SYNC_FULL (src/hle/clearz_hle.c)
-N64_LDFLAGS += --wrap __rdpq_clear_z $(HLE_EXTRA_LDFLAGS)
+N64_LDFLAGS += --wrap __rdpq_clear_z --wrap rdpq_attach --wrap rdpq_attach_clear --wrap rdpq_detach_cb --wrap rdpq_detach_show $(HLE_EXTRA_LDFLAGS)
+ifneq ($(HLE_BOOTFIX_ONLY),1)
 # Models register their vertices with the converted-vertex cache (src/hle/ovl_t3d.c)
 N64_LDFLAGS += --wrap t3d_model_load --wrap t3d_model_free
+endif
 # libdragon IPL3 patched to boot on emulators without RDRAM chip emulation (src/hle/ipl3/)
 junkrunner64-hle.z64: N64_ROM_HEADER=src/hle/ipl3/ipl3_hle.z64
 junkrunner64-hle.z64: N64_ROM_TITLE="Junk Runner 64 HLE"

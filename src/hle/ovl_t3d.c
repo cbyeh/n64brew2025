@@ -14,6 +14,7 @@
 #include "rsp/rsp_tiny3d.h"
 #include "rspq_internal.h"
 #include "hle.h"
+#include <math.h>
 #include "gbi.h"
 
 #define D(sym)      (RSP_T3D_##sym & 0xFFF)
@@ -520,9 +521,64 @@ uint32_t hle_vl_ticks[10], hle_vl_verts, hle_vl_amb, hle_vl_zrow, hle_vl_fog;   
 #else
 #define VL_MARK(i) do {} while (0)
 #endif
+// ---- Directional lights (rsp_tiny3d.rspl, the light loop) ----
+//
+// GBI lighting would replace the vertex colour, but Tiny3D multiplies it: colour *
+// (ambient + sum of max(0, n.L) * light colour), with the normal turned by the normalized
+// modelview columns (MATRIX_NORMAL) and L already in view space. So the CPU does it, per load.
+static struct { int n; float nm[3][3]; float dir[7][3]; int col[7][4]; int amb[4]; } lt;
+
+static void light_setup(void)
+{
+    float mv[4][4];
+    full_modelview(mv);
+    for (int i = 0; i < 3; i++) {
+        float l = sqrtf(mv[i][0]*mv[i][0] + mv[i][1]*mv[i][1] + mv[i][2]*mv[i][2]);
+        float inv = l > 0 ? 1.0f / l : 0;
+        for (int j = 0; j < 3; j++) lt.nm[i][j] = mv[i][j] * inv;
+    }
+    const uint8_t *amb = VDMEM_PTR(D(COLOR_AMBIENT));
+    for (int c = 0; c < 4; c++) lt.amb[c] = amb[c];
+    int n = VDMEM8(D(ACTIVE_LIGHT_SIZE)) / 16;
+    lt.n = 0;
+    for (int i = 0; i < n && i < 7; i++) {
+        const uint8_t *l = VDMEM_PTR(D(LIGHT_DIR_COLOR) + i * 16);
+        if (l[15]) { hle_warn_once("t3dpoint", "Tiny3D point lights are ignored"); continue; }
+        for (int c = 0; c < 4; c++) lt.col[lt.n][c] = l[c];
+        for (int j = 0; j < 3; j++) lt.dir[lt.n][j] = (int8_t)l[8 + j] * (1.0f / 128.0f);
+        lt.n++;
+    }
+}
+
+/** Lights the colours of a converted load in place (o: gbi_vtx_t pairs, in: T3DVertPacked). */
+static void vert_light(uint32_t *o, const uint32_t *in, int count, bool keep_alpha)
+{
+    for (int i = 0; i < count; i += 2, in += 8, o += 8) {
+        for (int v = 0; v < 2; v++) {
+            int16_t pn = (int16_t)(in[1 + 2*v] & 0xFFFF);  // 5.6.5 normal
+            float n0 = (pn >> 11) * (1.0f / 16.0f);
+            float n1 = ((int16_t)(pn << 5) >> 10) * (1.0f / 32.0f);
+            float n2 = ((int16_t)(pn << 11) >> 11) * (1.0f / 16.0f);
+            float nv[3];
+            for (int j = 0; j < 3; j++) nv[j] = n0 * lt.nm[0][j] + n1 * lt.nm[1][j] + n2 * lt.nm[2][j];
+            float acc[4] = { lt.amb[0], lt.amb[1], lt.amb[2], lt.amb[3] };
+            for (int k = 0; k < lt.n; k++) {
+                float d = nv[0] * lt.dir[k][0] + nv[1] * lt.dir[k][1] + nv[2] * lt.dir[k][2];
+                if (d <= 0) continue;
+                for (int c = 0; c < 4; c++) acc[c] += d * lt.col[k][c];
+            }
+            uint8_t *cn = (uint8_t*)&o[3 + 4*v];
+            for (int c = 0; c < (keep_alpha ? 3 : 4); c++) {
+                int a = acc[c] >= 255.0f ? 255 : (int)acc[c];
+                cn[c] = cn[c] * a / 255;
+            }
+        }
+    }
+}
+
 /** The copy for a vertex load not in the cache (kept apart so the hit path stays light). */
 __attribute__((noinline)) static void vert_load_copy(int dest, int count, const T3DVertPacked *src, vc_ent_t *e,
-                                                    uint32_t uv_ofs, bool scale, uint32_t amb, bool fog, const int64_t *k)
+                                                    uint32_t uv_ofs, bool scale, uint32_t amb, bool fog, const int64_t *k, bool lit)
 {
 #ifdef HLE_TEST_PERF
     uint32_t _vl = TICKS_READ();
@@ -563,6 +619,7 @@ __attribute__((noinline)) static void vert_load_copy(int dest, int count, const 
     case 6: vert_copy(out, in, count, false, true,  true,  uv_s, uv_t, amb_tbl, k); break;
     default: vert_copy(out, in, count, true, true,  true,  uv_s, uv_t, amb_tbl, k); break;
     }
+    if (lit) vert_light(out, in, count, fog_enabled());
 #ifdef HLE_TEST_T3D_EXACT   // test aid: the loop as it was, on the same input: every word must match
     {
         extern uint32_t hle_exact_calls, hle_exact_bad;
@@ -616,9 +673,9 @@ __attribute__((noinline)) static void vert_load(const uint32_t *a)
 
     bool unlit = VDMEM8(D(TRI_COMMAND)) & 1;
     uint32_t amb = VDMEM32(D(COLOR_AMBIENT));
-    bool scale = !unlit && amb != 0xFFFFFFFF;
-    if (!unlit && VDMEM8(D(ACTIVE_LIGHT_SIZE)))
-        hle_warn_once("t3dlights", "Tiny3D directional/point lights are ignored (ambient only)");
+    bool lit = !unlit && VDMEM8(D(ACTIVE_LIGHT_SIZE));
+    bool scale = !unlit && !lit && amb != 0xFFFFFFFF;
+    if (lit) light_setup();
 
     VL_MARK(4);
     bool fog = fog_enabled();
@@ -634,7 +691,7 @@ __attribute__((noinline)) static void vert_load(const uint32_t *a)
 #ifdef HLE_NO_VCACHE    // test aid: copy every load
     vc_ent_t *e = NULL;
 #else
-    vc_ent_t *e = fog ? NULL : vc_find(PhysicalAddr(src), count * sizeof(gbi_vtx_t), uv_ofs, scale ? amb : 0xFFFFFFFF);
+    vc_ent_t *e = (fog || lit) ? NULL : vc_find(PhysicalAddr(src), count * sizeof(gbi_vtx_t), uv_ofs, scale ? amb : 0xFFFFFFFF);
 #endif
     VL_MARK(6);
     if (e && e->out) {
@@ -648,7 +705,7 @@ __attribute__((noinline)) static void vert_load(const uint32_t *a)
 #endif
         return;
     }
-    vert_load_copy(dest, count, src, e, uv_ofs, scale, amb, fog, k);
+    vert_load_copy(dest, count, src, e, uv_ofs, scale, amb, fog, k, lit);
 }
 
 // Triangles are paired into G_TRI2, also across commands: hle_t3d_flush() is
