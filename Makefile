@@ -227,7 +227,7 @@ ifneq ($(JR_AUTOPLAY),)
 OBJS += $(BUILD_DIR)/test/autoplay.o
 $(BUILD_DIR)/test/autoplay.o: test/autoplay.c
 	@mkdir -p $(dir $@)
-	$(CC) -c $(CFLAGS) -DJR_AUTOPLAY='"$(JR_AUTOPLAY)"' -o $@ $<
+	$(CC) -c $(CFLAGS) -DJR_AUTOPLAY='"$(JR_AUTOPLAY)"' $(if $(JR_RACE),-DJR_RACE=$(JR_RACE)) -o $@ $<
 N64_LDFLAGS += $(foreach f,display_try_get joypad_poll joypad_get_buttons joypad_get_buttons_held joypad_get_buttons_pressed joypad_get_buttons_released joypad_get_inputs,--wrap $(f))
 endif
 

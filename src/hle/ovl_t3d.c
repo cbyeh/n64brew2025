@@ -536,7 +536,8 @@ uint32_t hle_vl_ticks[10], hle_vl_verts, hle_vl_amb, hle_vl_zrow, hle_vl_fog;   
 // modelview columns (MATRIX_NORMAL) and L already in view space. So the CPU does it, per load.
 static struct { int n; float nm[3][3]; float dir[7][3]; int col[7][4]; int amb[4]; } lt;
 
-static void light_setup(void)
+/** MATRIX_NORMAL: the modelview's columns, normalized (normals to view space). */
+static void normal_matrix(void)
 {
     float mv[4][4];
     full_modelview(mv);
@@ -545,6 +546,11 @@ static void light_setup(void)
         float inv = l > 0 ? 1.0f / l : 0;
         for (int j = 0; j < 3; j++) lt.nm[i][j] = mv[i][j] * inv;
     }
+}
+
+static void light_setup(void)
+{
+    normal_matrix();
     const uint8_t *amb = VDMEM_PTR(D(COLOR_AMBIENT));
     for (int c = 0; c < 4; c++) lt.amb[c] = amb[c];
     int n = VDMEM8(D(ACTIVE_LIGHT_SIZE)) / 16;
@@ -606,6 +612,27 @@ static void vert_normals(uint32_t *o, const uint32_t *in, int count)
         }
 }
 
+/**
+ * VertexFX_Spherical (vertexFX.rspl): UVs from the view-space normal, u = n.x * a0 + a0,
+ * v = n.y * a1 + a0 (a0 = width * 16, a1 = -height * 16, 10.5 texels).
+ * shortcut: the ucode also nudges the UV by the vertex's screen position (a parallax hint);
+ * skipped, so reflections don't slide across the screen.
+ */
+static void vert_spherical(uint32_t *o, const uint32_t *in, int count, int16_t a0, int16_t a1)
+{
+    for (int i = 0; i < count; i += 2, in += 8, o += 8)
+        for (int v = 0; v < 2; v++) {
+            int16_t pn = (int16_t)(in[1 + 2*v] & 0xFFFF);
+            float n0 = (pn >> 11) * (1.0f / 16.0f);
+            float n1 = ((int16_t)(pn << 5) >> 10) * (1.0f / 32.0f);
+            float n2 = ((int16_t)(pn << 11) >> 11) * (1.0f / 16.0f);
+            float x = n0 * lt.nm[0][0] + n1 * lt.nm[1][0] + n2 * lt.nm[2][0];
+            float y = n0 * lt.nm[0][1] + n1 * lt.nm[1][1] + n2 * lt.nm[2][1];
+            int16_t s = (int16_t)(x * a0 + a0), t = (int16_t)(y * a1 + a0);
+            o[2 + 4*v] = ((uint32_t)(uint16_t)s << 16) | (uint16_t)t;
+        }
+}
+
 /** Lights the colours of a converted load in place (o: gbi_vtx_t pairs, in: T3DVertPacked). */
 static void vert_light(uint32_t *o, const uint32_t *in, int count, bool keep_alpha)
 {
@@ -637,7 +664,7 @@ static void vert_light(uint32_t *o, const uint32_t *in, int count, bool keep_alp
 
 /** The copy for a vertex load not in the cache (kept apart so the hit path stays light). */
 __attribute__((noinline)) static void vert_load_copy(int dest, int count, const T3DVertPacked *src, vc_ent_t *e,
-                                                    uint32_t uv_ofs, bool scale, uint32_t amb, bool fog, const int64_t *k, bool lit, bool normals)
+                                                    uint32_t uv_ofs, bool scale, uint32_t amb, bool fog, const int64_t *k, bool lit, bool normals, bool sph)
 {
 #ifdef HLE_TEST_PERF
     uint32_t _vl = TICKS_READ();
@@ -680,6 +707,10 @@ __attribute__((noinline)) static void vert_load_copy(int dest, int count, const 
     }
     if (lit) vert_light(out, in, count, fog_enabled());
     if (normals) vert_normals(out, in, count);
+    if (sph) { if (!lit) normal_matrix(); vert_spherical(out, in, count, uv_ofs >> 16, uv_ofs); }
+#ifdef HLE_TEST_SPH_RED     // test aid: spherical-UV vertices drawn red
+    if (sph) for (int i = 0; i < count; i++) out[i * 4 + 3] = 0xFF0000FF;
+#endif
 #ifdef HLE_TEST_T3D_EXACT   // test aid: the loop as it was, on the same input: every word must match
     {
         extern uint32_t hle_exact_calls, hle_exact_bad;
@@ -727,9 +758,11 @@ __attribute__((noinline)) static void vert_load(const uint32_t *a)
     if (a[1] >> 24) hle_rp_bad();       // through a segment: the buffer may differ next time
 
     uint32_t fx = VDMEM16(D(VERTEX_FX_FUNC));
-    if (fx != (RSP_T3D_CODE_LOOP_TRAIL & 0xFFF))
+    bool sph = fx == (RSP_T3D_CODE_VertexFX_Spherical & 0xFFF);
+    if (!sph && fx != (RSP_T3D_CODE_LOOP_TRAIL & 0xFFF))
         hle_warn_once("t3dfx", "Tiny3D vertex FX %04lx not supported", fx);
     uint32_t uv_ofs = VDMEM32(D(UV_GEN_PARAMS));
+    if (sph) hle_rp_bad();              // view dependent
 
     bool unlit = VDMEM8(D(TRI_COMMAND)) & 1;
     uint32_t amb = VDMEM32(D(COLOR_AMBIENT));
@@ -756,7 +789,7 @@ __attribute__((noinline)) static void vert_load(const uint32_t *a)
 #ifdef HLE_NO_VCACHE    // test aid: copy every load
     vc_ent_t *e = NULL;
 #else
-    vc_ent_t *e = (fog || lit) ? NULL : vc_find(PhysicalAddr(src), count * sizeof(gbi_vtx_t), uv_ofs,
+    vc_ent_t *e = (fog || lit || sph) ? NULL : vc_find(PhysicalAddr(src), count * sizeof(gbi_vtx_t), uv_ofs,
                                                 normals ? 0xFFFFFFFE : scale ? amb : 0xFFFFFFFF);   // FFFFFFFE: normals
 #endif
     VL_MARK(6);
@@ -775,7 +808,7 @@ __attribute__((noinline)) static void vert_load(const uint32_t *a)
 #endif
         return;
     }
-    vert_load_copy(dest, count, src, e, uv_ofs, scale, amb, fog, k, lit, normals);
+    vert_load_copy(dest, count, src, e, uv_ofs, scale, amb, fog, k, lit, normals, sph);
 }
 
 // Triangles are paired into G_TRI2, also across commands: hle_t3d_flush() is

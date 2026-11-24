@@ -9,6 +9,7 @@
 #include <libdragon.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdio.h>
 
 typedef struct { int start, end; joypad_buttons_t keys; int8_t x, y; } step_t;
 
@@ -76,6 +77,14 @@ void __wrap_joypad_poll(void) {
 #endif
     }
     frame++;
+#ifdef JR_RACE      // test aid: start race JR_RACE (0-3) once the overworld runs, like the race bot does
+    if (frame == 90) {
+        extern void race_start(const char* completion_script, int lap_count);
+        static char script[48];
+        sprintf(script, "rom:/scenes/overworld.scene#race%d", JR_RACE);
+        race_start(script, 3);
+    }
+#endif
     prev = held;
     held = (joypad_buttons_t){0};
     stick_x = stick_y = 0;

@@ -373,6 +373,9 @@ void material_load(struct material* into, FILE* material_file) {
                             };
                             break;
                         case T3D_VERTEX_FX_SPHERICAL_UV:
+#ifdef JR_DEBUG
+                            debugf("[material] spherical UV\n");
+#endif
                             deferred_comands[deferred_command_count++] = (struct mat_def_cmd){
                                 .type = MAT_DEF_CMD_SET_VERTEX_FX,
                                 .set_vertex_fx = {
@@ -497,6 +500,9 @@ void material_load(struct material* into, FILE* material_file) {
 
 void material_load_file(struct material* into, const char* filename) {
     FILE* material_file = asset_fopen(filename, NULL);
+#ifdef JR_DEBUG
+    debugf("[material] %s\n", filename);
+#endif
     material_load(into, material_file);
     material_debug(into, filename);
     fclose(material_file);
