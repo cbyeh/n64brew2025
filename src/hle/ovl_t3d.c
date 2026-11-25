@@ -787,7 +787,11 @@ __attribute__((noinline)) static void vert_load(const uint32_t *a)
     bool lit = !unlit && VDMEM8(D(ACTIVE_LIGHT_SIZE)) && amb != 0xFFFFFFFF;
     bool scale = !unlit && !lit && amb != 0xFFFFFFFF;
     // white vertices: the plugin lights them (cacheable); others are lit here
+#ifdef HLE_NO_GBI_LIGHTS    // test aid: every lit load lit on the CPU
+    bool normals = false;
+#else
     bool normals = lit && lights_gbi() && load_white(src, count);
+#endif
     if (normals) { lit = false; hle_rp_bad(); }     // the lights change between frames
     gsp_3d.lit = normals;
     if (lit) light_setup();

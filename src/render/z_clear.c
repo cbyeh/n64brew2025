@@ -1,6 +1,7 @@
 #include "z_clear.h"
 
 #include <stdint.h>
+#include <libdragon.h>
 #include "../render/defs.h"
 
 #define IMG_W   64
@@ -48,6 +49,12 @@ void z_clear_init() {
 }
 
 void z_clear_dithered(surface_t* z_buffer) {
+#ifdef HLE_BUILD
+    // HLE plugins only treat a fill into the Z buffer as a depth clear: the dithered
+    // pattern below left Delta's depth buffer uncleared (near terrain drew black)
+    rdpq_clear_z(ZBUF_MAX);
+    return;
+#endif
     rdpq_sync_pipe();
     rdpq_set_mode_copy(false);
     rdpq_set_color_image(z_buffer);
