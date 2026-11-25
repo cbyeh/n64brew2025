@@ -1,3 +1,5 @@
+<img width="1000" alt="Junk Runner 64 cover art" src="metadata/cover.jpg">
+
 # Jam entry
 
 ## Playing on Delta and other HLE emulators
