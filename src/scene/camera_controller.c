@@ -393,7 +393,13 @@ void camera_controller_update_animation(struct camera_controller* controller) {
 
     controller->camera->transform.rotation.w = sqrtf(1.0f - neg_w);
     controller->camera->fov = (180.0f / PI_F) * anim_frame_buffer.fov;
+#ifdef JR_60HZ
+    // one baked frame per 1/30 s, not per update
+    controller->state_data.animate.time += fixed_time_step;
+    controller->state_data.animate.current_frame = (uint16_t)(controller->state_data.animate.time * 30.0f + 0.01f);
+#else
     controller->state_data.animate.current_frame += 1;
+#endif
     camera_look_at_from_rotation(controller);
 }
 
@@ -600,6 +606,7 @@ void camera_play_animation(struct camera_controller* controller, struct camera_a
     controller->state = CAMERA_STATE_ANIMATE;
     controller->state_data.animate.animation = animation;
     controller->state_data.animate.current_frame = 0;
+    controller->state_data.animate.time = 0.0f;
 }
 
 void camera_move_to(struct camera_controller* controller, struct Vector3* position, bool instant, bool move_target) {

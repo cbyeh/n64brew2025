@@ -36,7 +36,11 @@ void update_dispatch();
 
 void update_set_fixed_time_step(float step);
 
+#ifdef JR_60HZ
+#define DEFAULT_TIME_STEP      (1.0f / 60.0f)
+#else
 #define DEFAULT_TIME_STEP      (1.0f / 30.0f)
+#endif
 #define DEFAULT_PAL_TIME_STEP  (1.0f / 25.0f)
 
 extern float fixed_time_step;

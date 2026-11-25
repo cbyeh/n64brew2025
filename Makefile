@@ -249,6 +249,9 @@ N64_ASFLAGS += -Isrc/hle/internal
 # Block replay costs more than it saves here (overworld 10 -> 14 fps without it); the
 # overworld's near fade fits G_FOG within 15% alpha, so the plugin does the fog
 N64_C_AND_CXX_FLAGS += -DHLE_NO_REPLAY -DHLE_FOG_GBI_ERR=0.16f
+# 60 Hz simulation and frame rate (the game steps by fixed_time_step; camera animations
+# made time-based). HLE_HZ=30 builds the original 30 Hz.
+N64_C_AND_CXX_FLAGS += $(if $(filter 30,$(HLE_HZ)),,-DJR_60HZ)
 N64_C_AND_CXX_FLAGS += $(HLE_EXTRA_CFLAGS) -DHLE_BUILD -Isrc/hle -Isrc/hle/internal -Isrc/hle/internal/rspq -I$(T3D_INST)/src/t3d
 N64_LDFLAGS += --wrap sys_hw_memset --wrap sys_hw_memset16 --wrap sys_hw_memset32 --wrap sys_hw_memset64
 # Z clears without a mid-frame SYNC_FULL (src/hle/clearz_hle.c)

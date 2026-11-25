@@ -38,7 +38,7 @@
 
 void load_scene_or_repair(const char* filename) {
 #ifdef JR_DEBUG
-    debugf("[scene] load %s\n", filename);
+    debugf("[scene] load %s at %.2f s\n", filename, total_time);
 #endif
     if (main_menu_enable_scene_saving) {
         savefile_set_last_scene(filename, scene_get_next_entry());
@@ -169,7 +169,11 @@ void render(surface_t* col, surface_t* zbuffer) {
 }
 
 #define MAX_FRAME_CATCHUP   2
+#ifdef JR_60HZ
+#define VI_PER_FRAME 1     // test: 60 Hz simulation
+#else
 #define VI_PER_FRAME 2
+#endif
 volatile static int8_t vi_delay;
 
 void on_vi_interrupt() {
@@ -339,6 +343,16 @@ int main(void)
             }
     #else
             step_simulation();
+    #endif
+    #ifdef JR_DEBUG     // test aid: the player's position every game second (compare 30/60 Hz runs)
+            {
+                static float next_log = 1.0f;
+                if (current_scene && total_time >= next_log) {
+                    struct Vector3* p = player_get_position(&current_scene->player);
+                    debugf("[player] t %.1f pos %.2f %.2f %.2f\n", total_time, p->x, p->y, p->z);
+                    next_log += 1.0f;
+                }
+            }
     #endif
             
             vi_delay += VI_PER_FRAME;

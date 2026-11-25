@@ -39,6 +39,7 @@ union camera_controller_state_data {
     struct {
         struct camera_animation* animation;
         uint16_t current_frame;
+        float time;             // seconds played (frames are baked at 30 per second)
     } animate;
     struct {
         bool moving_position;

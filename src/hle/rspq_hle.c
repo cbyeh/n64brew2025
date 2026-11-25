@@ -1340,7 +1340,7 @@ rspq_block_t* rspq_block_end(void)
     // Save pointer to rdpq block (if any)
     rspq_block->rdp_block = __rdpq_block_end();
 
-#ifdef HLE_TEST_PERF
+#if defined(HLE_TEST_PERF) && defined(HLE_TEST_BLOCK_TIME)  // test aid: time inside blocks (scans every call: slow)
     { extern uint32_t hle_blk_addr[512]; extern int hle_blk_n; if (hle_blk_n < 512) hle_blk_addr[hle_blk_n++] = PhysicalAddr(rspq_block->cmds); }
 #endif
     hle_replay_block_new(rspq_block->cmds);
