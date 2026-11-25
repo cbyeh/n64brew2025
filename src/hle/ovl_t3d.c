@@ -551,11 +551,17 @@ uint32_t hle_vl_ticks[10], hle_vl_verts, hle_vl_amb, hle_vl_zrow, hle_vl_fog;   
 // GBI lighting would replace the vertex colour, but Tiny3D multiplies it: colour *
 // (ambient + sum of max(0, n.L) * light colour), with the normal turned by the normalized
 // modelview columns (MATRIX_NORMAL) and L already in view space. So the CPU does it, per load.
-static struct { int n; float nm[3][3]; float dir[7][3]; int col[7][4]; int amb[4]; } lt;
+static struct { int n; float nm[3][3]; float dir[7][3]; float mdir[7][3]; int col[7][4]; int amb[4]; } lt;
+static bool nm_valid;
+#ifdef HLE_TEST_LIGHT_CHECK
+int hle_light_maxdiff; uint32_t hle_light_checked;
+#endif           // lt.nm matches the matrix stack (cleared by matrix and DMEM-word commands)
 
 /** MATRIX_NORMAL: the modelview's columns, normalized (normals to view space). */
 static void normal_matrix(void)
 {
+    if (nm_valid) return;
+    nm_valid = true;
     float mv[4][4];
     full_modelview(mv);
     for (int i = 0; i < 3; i++) {
@@ -577,6 +583,11 @@ static void light_setup(void)
         if (l[15]) { hle_warn_once("t3dpoint", "Tiny3D point lights are ignored"); continue; }
         for (int c = 0; c < 4; c++) lt.col[lt.n][c] = l[c];
         for (int j = 0; j < 3; j++) lt.dir[lt.n][j] = (int8_t)l[8 + j] * (1.0f / 128.0f);
+        // n_view . L = n_model . (NM^T L): turn the light into model space once per load, with
+        // the 5.6.5 normal's scales folded in (x, z / 16, y / 32)
+        static const float ns[3] = { 1.0f / 16.0f, 1.0f / 32.0f, 1.0f / 16.0f };
+        for (int i = 0; i < 3; i++)
+            lt.mdir[lt.n][i] = ns[i] * (lt.nm[i][0] * lt.dir[lt.n][0] + lt.nm[i][1] * lt.dir[lt.n][1] + lt.nm[i][2] * lt.dir[lt.n][2]);
         lt.n++;
     }
 }
@@ -656,24 +667,41 @@ static void vert_light(uint32_t *o, const uint32_t *in, int count, bool keep_alp
     for (int i = 0; i < count; i += 2, in += 8, o += 8) {
         for (int v = 0; v < 2; v++) {
             int16_t pn = (int16_t)(in[1 + 2*v] & 0xFFFF);  // 5.6.5 normal
-            float n0 = (pn >> 11) * (1.0f / 16.0f);
-            float n1 = ((int16_t)(pn << 5) >> 10) * (1.0f / 32.0f);
-            float n2 = ((int16_t)(pn << 11) >> 11) * (1.0f / 16.0f);
-            float nv[3];
-            for (int j = 0; j < 3; j++) nv[j] = n0 * lt.nm[0][j] + n1 * lt.nm[1][j] + n2 * lt.nm[2][j];
+            float n0 = pn >> 11, n1 = (int16_t)(pn << 5) >> 10, n2 = (int16_t)(pn << 11) >> 11;
             float acc[4] = { lt.amb[0], lt.amb[1], lt.amb[2], lt.amb[3] };
             for (int k = 0; k < lt.n; k++) {
-                float d = nv[0] * lt.dir[k][0] + nv[1] * lt.dir[k][1] + nv[2] * lt.dir[k][2];
+                float d = n0 * lt.mdir[k][0] + n1 * lt.mdir[k][1] + n2 * lt.mdir[k][2];
                 if (d <= 0) continue;
                 for (int c = 0; c < 4; c++) acc[c] += d * lt.col[k][c];
             }
             uint8_t *cn = (uint8_t*)&o[3 + 4*v];
+#ifdef HLE_TEST_LIGHT_CHECK     // test aid: the view-space way (as before), compared per channel
+            {
+                extern int hle_light_maxdiff; extern uint32_t hle_light_checked;
+                float m0 = n0 / 16.0f, m1 = n1 / 32.0f, m2 = n2 / 16.0f, nv[3];
+                for (int j = 0; j < 3; j++) nv[j] = m0 * lt.nm[0][j] + m1 * lt.nm[1][j] + m2 * lt.nm[2][j];
+                float ref[4] = { lt.amb[0], lt.amb[1], lt.amb[2], lt.amb[3] };
+                for (int k = 0; k < lt.n; k++) {
+                    float d = nv[0] * lt.dir[k][0] + nv[1] * lt.dir[k][1] + nv[2] * lt.dir[k][2];
+                    if (d > 0) for (int c = 0; c < 4; c++) ref[c] += d * lt.col[k][c];
+                }
+                for (int c = 0; c < 3; c++) {
+                    int a0 = acc[c] >= 255.0f ? 255 : (int)acc[c], a1 = ref[c] >= 255.0f ? 255 : (int)ref[c];
+                    int x0 = cn[c] * a0 / 255, x1 = cn[c] * a1 / 255;
+                    uint32_t q = cn[c] * a0; int x2 = (q + 1 + (q >> 8)) >> 8;
+                    int dd = abs(x2 - x1); if (abs(x0 - x2) > dd) dd = abs(x0 - x2) + 100;   // +100: the /255 trick is wrong
+                    if (dd > hle_light_maxdiff) hle_light_maxdiff = dd;
+                }
+                hle_light_checked++;
+            }
+#endif
 #ifdef HLE_TEST_PERF
             { extern uint32_t hle_lit_white, hle_lit_all; hle_lit_all++; hle_lit_white += cn[0] == 255 && cn[1] == 255 && cn[2] == 255; }
 #endif
             for (int c = 0; c < (keep_alpha ? 3 : 4); c++) {
                 int a = acc[c] >= 255.0f ? 255 : (int)acc[c];
-                cn[c] = cn[c] * a / 255;
+                uint32_t q = cn[c] * a;
+                cn[c] = (q + 1 + (q >> 8)) >> 8;           // q / 255 (exact below 65536)
             }
         }
     }
@@ -1035,9 +1063,11 @@ void ovl_t3d(uint32_t cmd, const uint32_t *a, int n)
         VDMEM16(D(NORM_SCALE_W) + 6) = a[3] & 0xFFFF;
         return;
     case T3D_CMD_MATRIX_STACK:
+        nm_valid = false;
         matrix_stack(a[0], a[1]);
         return;
     case T3D_CMD_SET_WORD: {
+        nm_valid = false;               // may move a segment the matrices are read through
         uint32_t addr = a[0] & 0xFFFF;
         if ((addr & 0xFFF) < __vrsp_state_start || (addr & 0xFFF) + 4 > __vrsp_state_end) hle_rp_bad();   // outside what replay restores
         if ((addr & 0xFFF) >= D(SEGMENT_TABLE) && (addr & 0xFFF) < D(SEGMENT_TABLE) + 32) hle_rp_bad();     // segments aren't in signatures
