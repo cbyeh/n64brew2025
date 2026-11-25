@@ -182,6 +182,9 @@ static int vi_per_frame = VI_PER_FRAME;
 // a 25-31 wobble, while 40-60 (races) beats a locked 30. The game steps by fixed_time_step,
 // so the rate can change at any time.
 static void rate_adapt(uint32_t busy) {
+#ifdef JR_FIXED_RATE        // test aid: stay at 60 Hz (scripted input counts updates)
+    return;
+#endif
     static float ema;
     static int streak;
     const float vi = TICKS_PER_SECOND / 60.0f;

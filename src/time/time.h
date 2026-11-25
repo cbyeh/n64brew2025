@@ -47,6 +47,16 @@ extern float fixed_time_step;
 extern float scaled_time_step;
 extern float scaled_time_step_inv;
 extern float total_time;
+
+// A factor the game applies once per update, tuned for 30 updates a second (damping,
+// smoothing). At 60 Hz it must be applied with half the strength to give the same result
+// per second: f^(step * 30). Exactly f at 30 Hz.
+#if defined(JR_60HZ) && !defined(JR_NO_STEP_FACTOR)
+#include <math.h>
+static inline float time_step_factor(float f) { return powf(f, fixed_time_step * 30.0f); }
+#else
+static inline float time_step_factor(float f) { return f; }
+#endif
 extern float game_time;
 extern float global_time_scale;
 

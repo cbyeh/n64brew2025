@@ -50,7 +50,7 @@ void water_apply(struct dynamic_object* object) {
         1.0f : 
         (water_top - object->bounding_box.min.y) / (object->bounding_box.max.y - object->bounding_box.min.y);
 
-    vector3Scale(&object->velocity, &object->velocity, mathfLerp(1.0f, 0.9f, underwater_ratio));
+    vector3Scale(&object->velocity, &object->velocity, time_step_factor(mathfLerp(1.0f, 0.9f, underwater_ratio)));
     object->velocity.y -= underwater_ratio * density_level[object->density_class] * fixed_time_step;
 
     if (underwater_ratio > 0.5f) {

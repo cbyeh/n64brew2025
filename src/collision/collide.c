@@ -1,3 +1,4 @@
+#include "../time/time.h"
 #include "collide.h"
 
 #include "epa.h"
@@ -45,7 +46,7 @@ void correct_overlap_no_slide(
     }
 
     if (object->type->friction) {
-        float scalar = 1.0f - object->type->friction;
+        float scalar = time_step_factor(1.0f - object->type->friction);
         object->velocity.x *= scalar;
         object->velocity.z *= scalar;
     }

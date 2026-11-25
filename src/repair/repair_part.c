@@ -1,3 +1,4 @@
+#include "../time/time.h"
 #include "repair_part.h"
 
 #include "../collision/raycast.h"
@@ -113,7 +114,7 @@ void repair_part_update(repair_part_t* part) {
         return;
     }
 
-    quatLerp(&part->transform.rotation, &part->target_rotation, 0.3f, &part->transform.rotation);
+    quatLerp(&part->transform.rotation, &part->target_rotation, 1.0f - time_step_factor(0.7f), &part->transform.rotation);
 }
 
 void repair_part_set_complete(repair_part_t* part) {

@@ -510,9 +510,19 @@ void camera_controller_update(struct camera_controller* controller) {
 
     camera_wall_checker_update(&controller->wall_checker, &controller->looking_at, &controller->target, follow_distance);
 
+#ifdef JR_60HZ
+    // the shake spring is tuned per 1/30 s step: step it at 30 Hz whatever the update rate
+    static float shake_time;
+    for (shake_time += fixed_time_step; shake_time > 1.0f / 30.0f - 0.0001f; shake_time -= 1.0f / 30.0f) {
+        vector3AddScaled(&controller->shake_velocity, &controller->shake_offset, -50.0f, &controller->shake_velocity);
+        vector3AddScaled(&controller->shake_offset, &controller->shake_velocity, 1.0f / 30.0f, &controller->shake_offset);
+        vector3Scale(&controller->shake_velocity, &controller->shake_velocity, 0.5f);
+    }
+#else
     vector3AddScaled(&controller->shake_velocity, &controller->shake_offset, -50.0f, &controller->shake_velocity);
     vector3AddScaled(&controller->shake_offset, &controller->shake_velocity, fixed_time_step, &controller->shake_offset);
     vector3Scale(&controller->shake_velocity, &controller->shake_velocity, 0.5f);
+#endif
     vector3Add(&controller->stable_position, &controller->shake_offset, &controller->camera->transform.position);
 
     camera_controller_determine_near_plane(controller);

@@ -622,14 +622,14 @@ void motorcycle_update(void* data) {
         if (is_grounded) {
             target_vel.y += spring_accel * fixed_time_step;
         } else {
-            vector3Scale(&target_vel, &target_vel, 0.99f);
+            vector3Scale(&target_vel, &target_vel, time_step_factor(0.99f));
             vector3Add(&target_vel, &normal_velocity, &target_vel);
         }
 
         motorcycle->has_traction = vector3MoveTowards(vel, &target_vel, 2.0f * accel_modifier * max_accel * scaled_time_step, vel);
     } else {
         vector3_t* vel = &motorcycle->collider.velocity;
-        vector3Scale(vel, vel, 0.99f);
+        vector3Scale(vel, vel, time_step_factor(0.99f));
     }
 
     motorcycle->vehicle.is_grounded = is_grounded;

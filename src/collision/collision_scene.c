@@ -1,3 +1,4 @@
+#include "../time/time.h"
 #include "collision_scene.h"
 
 #include <malloc.h>
@@ -377,7 +378,7 @@ void collision_scene_collide_single(struct dynamic_object* object, struct Vector
     // valid location
     *object->position = *prev_pos;
     // slow the the object so it can start using non swept collision
-    vector3Scale(&object->velocity, &object->velocity, 0.9f);
+    vector3Scale(&object->velocity, &object->velocity, time_step_factor(0.9f));
 }
 
 void collision_scene_snap_to_ground(struct dynamic_object* object, struct Vector3* prev_pos) {
