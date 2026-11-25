@@ -29,6 +29,20 @@ SOFTWARE.
 
 #define SPINSPEED 0.9f
 
+#ifdef HLE_BUILD
+// HLE build: the display stays at the game's 320x240 from boot (main.c) and is never closed.
+// display_close() blanks the VI (width 0) and Delta's GLideN64 aborts on the 0-wide frame
+// buffer it then creates, so the logos are drawn at half scale instead of at 640x480.
+#define LS              0.5f
+#define LOGO_DISPLAY(...)   do {} while (0)
+#define LOGO_CLOSE()        do {} while (0)
+#else
+#define LS              1.0f
+#define LOGO_DISPLAY(...)   display_init(__VA_ARGS__)
+#define LOGO_CLOSE()        display_close()
+#endif
+#define L(v)            ((v) * LS)
+
 // Easing function for quadratic ease-out
 //  t = current time
 //  b = start value
@@ -51,7 +65,7 @@ void logo_libdragon() {
   wav64_t music;
   wav64_open(&music, "rom:/sounds/menu/dragon.wav64");
 
-  display_init(RESOLUTION_640x480,
+  LOGO_DISPLAY(RESOLUTION_640x480,
       DEPTH_16_BPP,
       2,
       GAMMA_NONE,
@@ -122,9 +136,9 @@ void logo_libdragon() {
     if (angle1 > 1.0f) {
       // Initially, also scissor horizontally, 
       // so that the head tail is not visible on the right.
-      rdpq_set_scissor(0, 0, X0+300, Y0+240);  
+      rdpq_set_scissor(0, 0, L(X0+300), L(Y0+240));  
     } else {
-      rdpq_set_scissor(0, 0, 640, Y0+240);
+      rdpq_set_scissor(0, 0, L(640), L(Y0+240));
     }
 
     // Draw dragon head
@@ -133,23 +147,23 @@ void logo_libdragon() {
     rdpq_mode_blender(RDPQ_BLENDER_MULTIPLY);
     rdpq_mode_combiner(RDPQ_COMBINER1((0,0,0,PRIM),(TEX0,0,PRIM,0)));
     rdpq_set_prim_color(red);
-    rdpq_sprite_blit(d1, X0+216, Y0+205, &(rdpq_blitparms_t){
-      .theta = angle1, .scale_x = scale1+1, .scale_y = scale1+1,
+    rdpq_sprite_blit(d1, L(X0+216), L(Y0+205), &(rdpq_blitparms_t){
+      .theta = angle1, .scale_x = L(scale1+1), .scale_y = L(scale1+1),
       .cx = 176, .cy = 171,
     });
 
     // Restore scissor to standard
-    rdpq_set_scissor(0, 0, 640, 480);
+    rdpq_set_scissor(0, 0, L(640), L(480));
 
     // Draw a black rectangle with alpha gradient, to cover the head tail
     rdpq_mode_combiner(RDPQ_COMBINER_SHADE);
     rdpq_mode_dithering(DITHER_NOISE_NOISE);
     float vtx[4][6] = {
       //  x,    y,  r,g,b,a
-      { X0+0,   Y0+180, 0,0,0,0 },
-      { X0+200, Y0+180, 0,0,0,0 },
-      { X0+200, Y0+240, 0,0,0,1 },
-      { X0+0,   Y0+240, 0,0,0,1 },
+      { L(X0+0),   L(Y0+180), 0,0,0,0 },
+      { L(X0+200), L(Y0+180), 0,0,0,0 },
+      { L(X0+200), L(Y0+240), 0,0,0,1 },
+      { L(X0+0),   L(Y0+240), 0,0,0,1 },
     };
     rdpq_triangle(&TRIFMT_SHADE, vtx[0], vtx[1], vtx[2]);
     rdpq_triangle(&TRIFMT_SHADE, vtx[0], vtx[2], vtx[3]);
@@ -166,13 +180,13 @@ void logo_libdragon() {
       color.r *= 1-scale3; color.g *= 1-scale3; color.b *= 1-scale3;
       rdpq_set_prim_color(color);
 
-      rdpq_sprite_blit(d2, X0+246, Y0+230, &(rdpq_blitparms_t){ 
-        .theta = angle2, .scale_x = 1-scale2, .scale_y = 1-scale2,
+      rdpq_sprite_blit(d2, L(X0+246), L(Y0+230), &(rdpq_blitparms_t){ 
+        .theta = angle2, .scale_x = L(1-scale2), .scale_y = L(1-scale2),
         .cx = 145, .cy = 113,
       });
 
-      rdpq_sprite_blit(d3, X0+266, Y0+256, &(rdpq_blitparms_t){ 
-        .theta = -angle3, .scale_x = 1-scale3, .scale_y = 1-scale3,
+      rdpq_sprite_blit(d3, L(X0+266), L(Y0+256), &(rdpq_blitparms_t){ 
+        .theta = -angle3, .scale_x = L(1-scale3), .scale_y = L(1-scale3),
         .cx = 91, .cy = 24,
       });
     }
@@ -180,7 +194,7 @@ void logo_libdragon() {
     // Draw scrolling logo
     if (anim_part >= 2) {
       rdpq_set_prim_color(white);
-      rdpq_sprite_blit(d4, X0 + 161 + (int)scroll4, Y0 + 182, NULL);
+      rdpq_sprite_blit(d4, L(X0 + 161 + (int)scroll4), L(Y0 + 182), &(rdpq_blitparms_t){ .scale_x = LS, .scale_y = LS });
     }
 
     rdpq_detach_show();
@@ -193,11 +207,11 @@ void logo_libdragon() {
   sprite_free(d3);
   sprite_free(d4);
   wav64_close(&music);
-  display_close();
+  LOGO_CLOSE();
 }
 
 void logo_t3d() {
-  display_init(RESOLUTION_640x480,
+  LOGO_DISPLAY(RESOLUTION_640x480,
       DEPTH_16_BPP,
       2,
       GAMMA_NONE,
@@ -206,11 +220,11 @@ void logo_t3d() {
 
   rdpq_set_mode_standard();
   rdpq_attach_clear(display_get(), NULL);
-  rdpq_sprite_blit(logo, 55, 137, NULL);
+  rdpq_sprite_blit(logo, L(55), L(137), &(rdpq_blitparms_t){ .scale_x = LS, .scale_y = LS });
   rdpq_detach_show();
 
   wait_ms(3000);
   rspq_wait();
   sprite_free(logo);
-  display_close();
+  LOGO_CLOSE();
 }

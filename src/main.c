@@ -228,12 +228,19 @@ int main(void)
     joypad_init();
     audio_player_init();
 
+	resolution_t custom_res = {SCREEN_WD, SCREEN_HT, false};
+
+#ifdef HLE_BUILD
+    // one display for the whole run (see logo.c: closing it crashes Delta)
+    display_init(custom_res, DEPTH_16_BPP, 3, GAMMA_NONE, FILTERS_RESAMPLE);
+    logo_libdragon();
+    logo_t3d();
+#else
     logo_libdragon();
     logo_t3d();
 
-	resolution_t custom_res = {SCREEN_WD, SCREEN_HT, false};
-
     display_init(custom_res, DEPTH_16_BPP, 3, GAMMA_NONE, FILTERS_RESAMPLE);
+#endif
     // display_set_fps_limit(30.0f);
 	// *(volatile uint32_t*)0xA4400000 |= 0x300; //disables resampling on the VI
 
