@@ -43,6 +43,27 @@ static struct {
 #define fog_dirty       rs.fog_dirty
 #define tri_has_pending rs.tri_has_pending
 static hle_mat4_t mat_mv;
+// The projection the plugin gets: Tiny3D's with the near plane pulled in (HLE_NEAR_PULL x
+// closer). Tiny3D clips against the eye and draws what is between it and the near plane at
+// the nearest depth; GL clips at the near plane, so walls and the back of the player's head
+// right in front of the camera were cut away. Only the Z row differs: screen positions match.
+#ifndef HLE_NEAR_PULL
+#define HLE_NEAR_PULL 16.0f
+#endif
+static hle_mat4_t mat_proj_gbi;
+static void proj_gbi_update(void)
+{
+    memcpy(mat_proj_gbi, mat_proj, sizeof(mat_proj_gbi));
+#ifndef HLE_NO_NEAR_PULL
+    float a = mat_proj[2][2], b = mat_proj[3][2];
+    if (mat_proj[2][3] != -1.0f || mat_proj[3][3] != 0.0f || a == 1.0f || a == -1.0f) return;   // not a plain perspective
+    float n = b / (a - 1), f = b / (a + 1);
+    if (!(n > 0 && f > n)) return;
+    float n2 = n / HLE_NEAR_PULL;
+    mat_proj_gbi[2][2] = -(f + n2) / (f - n2);
+    mat_proj_gbi[3][2] = -2 * f * n2 / (f - n2);
+#endif
+}
 
 static inline uint32_t resolve_segment(uint32_t addr)
 {
@@ -251,7 +272,7 @@ static void fog_plane(int64_t k[4])
  * Refit only when the fog or projection values change.
  */
 __attribute__((noinline)) static uint32_t fog_gbi_fit(void);
-static uint32_t fog_gbi_refit(float sl, float ofs, const float (*P)[4]);
+static uint32_t fog_gbi_refit(float sl, float ofs, const float (*P)[4], const float (*Pg)[4]);
 static inline uint32_t fog_gbi(void)
 {
 #ifdef HLE_FOG_CPU      // test aid: always the exact CPU fog
@@ -274,15 +295,17 @@ static uint32_t fog_gbi_fit(void)
     float now[6] = { sl, ofs, P[2][2], P[3][2], P[2][3], P[3][3] };
     if (!memcmp(key, now, sizeof(now))) return word;
     memcpy(key, now, sizeof(now));
-    return fog_word = fog_gbi_refit(sl, ofs, P);
+    return fog_word = fog_gbi_refit(sl, ofs, P, (const float (*)[4])mat_proj_gbi);
 }
 /** The G_FOG closest to the current Tiny3D fog (0 = keep CPU fog). */
-static uint32_t fog_gbi_refit(float sl, float ofs, const float (*P)[4])
+static uint32_t fog_gbi_refit(float sl, float ofs, const float (*P)[4], const float (*Pg)[4])
 {
     uint32_t word = 0;
     if (P[0][2] != 0 || P[1][2] != 0 || P[0][3] != 0 || P[1][3] != 0) return 0;   // not a plain perspective
-    // eye point at depth d: clip z = az*d + bz, clip w = aw*d + bw; Tiny3D alpha = sl*clip_z + ofs
+    // eye point at depth d: clip z = az*d + bz, clip w = aw*d + bw; Tiny3D alpha = sl*clip_z + ofs.
+    // The plugin's NDC z comes from its own projection (Pg: near plane pulled in)
     float az = -P[2][2], bz = P[3][2], aw = -P[2][3], bw = P[3][3];
+    float gz = -Pg[2][2], hz = Pg[3][2];
     if (sl * az == 0) return 0;
     // depths where the alpha leaves its near value (va) and reaches its far one (1 - va)
     float va = sl * az < 0;
@@ -292,14 +315,14 @@ static uint32_t fog_gbi_refit(float sl, float ofs, const float (*P)[4])
     for (int i = 0; i < 16; i++) for (int j = 0; j < 16; j++) {
         float d0 = dn + w * (-0.1f + 0.4f * i / 15), d1 = df + w * (-0.1f + 0.6f * j / 15);
         if (d0 <= 0 || d1 <= d0) continue;
-        float u0 = (az*d0 + bz) / (aw*d0 + bw), u1 = (az*d1 + bz) / (aw*d1 + bw);
+        float u0 = (gz*d0 + hz) / (aw*d0 + bw), u1 = (gz*d1 + hz) / (aw*d1 + bw);
         float fm = roundf(256 * (1 - 2 * va) / (u1 - u0)), fo = roundf(256 * va - u0 * fm);
         if (!(fabsf(fm) <= 32767 && fo >= -32768 && fo <= 32767)) continue;
         float err = 0;
         for (int n = 0; n < 24 && err < best; n++) {
             float d = dn + w * (-0.25f + 1.75f * n / 23);
             if (d <= 0) continue;
-            float t = (sl*(az*d + bz) + ofs) / 255, g = (fm * (az*d + bz) / (aw*d + bw) + fo) / 256;
+            float t = (sl*(az*d + bz) + ofs) / 255, g = (fm * (gz*d + hz) / (aw*d + bw) + fo) / 256;
             t = t < 0 ? 0 : t > 1 ? 1 : t; g = g < 0 ? 0 : g > 1 ? 1 : g;
             err = fmaxf(err, fabsf(t - g));
         }
@@ -1024,7 +1047,7 @@ void hle_t3d_matrices(const float (**proj)[4], const float (**mv)[4])
 {
     hle_rp_bad();
     full_modelview(mat_mv);
-    *proj = mat_proj;
+    *proj = mat_proj_gbi;               // tinypx depths must match the plugin's
     *mv = mat_mv;
 }
 
@@ -1134,7 +1157,8 @@ void ovl_t3d(uint32_t cmd, const uint32_t *a, int n)
     }
     case T3D_CMD_PROJ_SET:
         hle_mat_from_fp(mat_proj, hle_rdram(a[0] & 0xFFFFFF));
-        gsp_3d_proj(&mat_proj);
+        proj_gbi_update();
+        gsp_3d_proj(&mat_proj_gbi);
         for (int m = 0; m < 4; m++)
             proj_z[m] = fp_elem((const int16_t*)hle_rdram(a[0] & 0xFFFFFF) + m * 8, 2);
         zvalid = -1;                            // fog rows depend on the projection
