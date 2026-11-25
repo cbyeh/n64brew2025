@@ -107,11 +107,14 @@ static void update_render_mode(void)
 
     // The same inputs give the same mode: models switch between a few, so keep the last ones
     typedef struct { uint64_t comb, mask; uint32_t hi, lo, t0, t1, out[4]; bool valid; } rm_memo_t;
-    static rm_memo_t memo[64];
+#ifndef HLE_RM_MEMO_BITS
+#define HLE_RM_MEMO_BITS 9          // 512 entries: Junk Runner's overworld cycles through hundreds
+#endif
+    static rm_memo_t memo[1 << HLE_RM_MEMO_BITS];
     uint32_t h = som_hi * 31 + som_lo;
     h = h * 31 + (uint32_t)MODE.combiner; h = h * 31 + (uint32_t)(MODE.combiner >> 32);
     h = h * 31 + MODE.blend_step0; h = h * 31 + MODE.blend_step1;
-    rm_memo_t *m = &memo[(h * 2654435761u) >> 26];
+    rm_memo_t *m = &memo[(h * 2654435761u) >> (32 - HLE_RM_MEMO_BITS)];
     if (m->valid && m->hi == som_hi && m->lo == som_lo && m->comb == MODE.combiner && m->mask == MODE.combiner_mipmapmask &&
             m->t0 == MODE.blend_step0 && m->t1 == MODE.blend_step1) {
 #ifdef HLE_TEST_PERF

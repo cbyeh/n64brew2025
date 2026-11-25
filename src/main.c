@@ -175,9 +175,40 @@ void render(surface_t* col, surface_t* zbuffer) {
 #define VI_PER_FRAME 2
 #endif
 volatile static int8_t vi_delay;
+static int vi_per_frame = VI_PER_FRAME;
+
+#ifdef JR_60HZ
+// 60 Hz unless frames run under ~40 fps (the dense overworld), then 30 Hz: a steady 30 beats
+// a 25-31 wobble, while 40-60 (races) beats a locked 30. The game steps by fixed_time_step,
+// so the rate can change at any time.
+static void rate_adapt(uint32_t busy) {
+    static float ema;
+    static int streak;
+    const float vi = TICKS_PER_SECOND / 60.0f;
+    ema = ema * 0.9f + busy * 0.1f;
+#ifdef JR_LOG_RATE
+    { static int n; if (++n % 60 == 0) debugf("[rate] frame %.1f ms at %d Hz\n", ema * 1000.0f / TICKS_PER_SECOND, 60 / vi_per_frame); }
+#endif
+    if (vi_per_frame == 1) {
+        streak = ema > 1.5f * vi ? streak + 1 : 0;      // 25 ms: under 40 fps
+        if (streak < 30) return;
+        vi_per_frame = 2;
+        update_set_fixed_time_step(1.0f / 30.0f);
+    } else {
+        streak = ema < 1.2f * vi ? streak + 1 : 0;      // 20 ms: 50 fps or better
+        if (streak < 120) return;
+        vi_per_frame = 1;
+        update_set_fixed_time_step(1.0f / 60.0f);
+    }
+    streak = 0;
+#ifdef JR_DEBUG
+    debugf("[rate] %d Hz (frame %.1f ms)\n", 60 / vi_per_frame, ema * 1000.0f / TICKS_PER_SECOND);
+#endif
+}
+#endif
 
 void on_vi_interrupt() {
-    if (vi_delay > -MAX_FRAME_CATCHUP * VI_PER_FRAME) {
+    if (vi_delay > -MAX_FRAME_CATCHUP * vi_per_frame) {
         vi_delay -= 1;
     }
 }
@@ -273,7 +304,8 @@ int main(void)
 
         while (vi_delay > 0) {}
 
-        int update_count = -vi_delay / VI_PER_FRAME + 1;
+        uint32_t busy_start = get_ticks();
+        int update_count = -vi_delay / vi_per_frame + 1;
 
         if (check_scene_load()) {
             continue;
@@ -370,9 +402,12 @@ int main(void)
             }
     #endif
             
-            vi_delay += VI_PER_FRAME;
+            vi_delay += vi_per_frame;
 
             SC_PROFILE_END(main, update);
         }
+#ifdef JR_60HZ
+        rate_adapt(get_ticks() - busy_start);
+#endif
     }
 }
