@@ -143,6 +143,8 @@ void gbi_mtx(const hle_mat4_t *m, uint32_t which);
 int hle_t3d_tri_run(const uint32_t *a, uint32_t cmd_byte);
 /** A block was freed or is re-recorded: cached triangle lists from blocks are dropped (ovl_t3d.c). */
 void hle_tris_block_gone(void);
+/** DMEM was written behind Tiny3D's back (rspq WRITE_WORD / DMA): vertex loads re-read its state. */
+void hle_t3d_state_changed(void);
 /** Pending Tiny3D triangles must reach the display list before anything else (ovl_t3d.c). */
 void hle_t3d_flush(void);
 

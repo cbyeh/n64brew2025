@@ -61,6 +61,9 @@ void __wrap_joypad_poll(void) {
     if (step_count < 0) { parse(); register_VI_handler(on_vi); vis_last = vis; }
     if (vis - vis_last >= 60) {
         debugf("[fps] %d frames in %d VIs at step %d\n", renders, vis - vis_last, frame);
+#ifdef HLE_TEST_VL_CHECK
+        { extern uint32_t hle_vl_checked, hle_vl_wrong; debugf("[vlcheck] %lu loads checked, %lu stale\n", (unsigned long)hle_vl_checked, (unsigned long)hle_vl_wrong); }
+#endif
 #ifdef HLE_TEST_LIGHT_CHECK
         { extern int hle_light_maxdiff; extern uint32_t hle_light_checked; debugf("[light] %lu vertices checked, max diff %d\n", (unsigned long)hle_light_checked, hle_light_maxdiff); }
 #endif

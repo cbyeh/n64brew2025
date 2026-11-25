@@ -46,7 +46,9 @@ static void write8(uint32_t a0, uint32_t a1) { staging[staged++] = a0; staging[s
 static void write16(uint32_t a0, uint32_t a1, uint32_t a2, uint32_t a3) {
     write8(a0, a1); write8(a2, a3);
 }
+void hle_rdpq_flush_modes(void);
 static void finalize(void) {
+    hle_rdpq_flush_modes();
 #ifdef HLE_TEST_PERF
     extern uint32_t hle_fin_ticks; uint32_t t = TICKS_READ();
 #endif
@@ -86,22 +88,63 @@ static uint32_t fixup_address(uint32_t a1)
     return (a1 + address_table[(a1 >> 24) >> 2]) & 0x00FFFFFF;
 }
 
+// Mode changes come in bursts (a material block sets several in a row), and only the last
+// combiner / other modes / scissor matter to the next thing drawn. So they wait here and go
+// out together just before the next command that isn't a mode change (rspq_hle.c calls
+// hle_rdpq_flush_modes). HLE_NO_MODE_DEFER: send each one at once, as before.
+bool hle_rdpq_modes_pending;
+static uint32_t pend[3][2];             // SET_COMBINE, SET_OTHER_MODES, SET_SCISSOR
+static bool pend_set[3];
+
+void hle_rdpq_flush_modes(void)
+{
+    if (!hle_rdpq_modes_pending) return;
+    uint32_t out[6]; int n = 0;
+    for (int i = 0; i < 3; i++) if (pend_set[i]) { out[n++] = pend[i][0]; out[n++] = pend[i][1]; pend_set[i] = false; }
+    hle_rdpq_modes_pending = false;
+    vrsp_rdpq_send(out, n * 4);
+}
+
+/** finalize() for mode updates: staged SET_COMBINE / SET_OTHER_MODES / SET_SCISSOR wait. */
+static void finalize_modes(void)
+{
+#ifndef HLE_NO_MODE_DEFER
+    bool only_modes = staged > 0;
+    for (int i = 0; i < staged && only_modes; i += 2) {
+        uint32_t op = staging[i] >> 24;
+        only_modes = op == 0xFC || op == 0xEF || op == 0xED;
+    }
+    if (only_modes) {
+        for (int i = 0; i < staged; i += 2) {
+            uint32_t op = staging[i] >> 24;
+            int k = op == 0xFC ? 0 : op == 0xEF ? 1 : 2;
+            pend[k][0] = staging[i]; pend[k][1] = staging[i + 1]; pend_set[k] = true;
+        }
+        staged = 0;
+        hle_rdpq_modes_pending = true;
+        return;
+    }
+#endif
+    hle_rdpq_flush_modes();
+    finalize();
+}
+
 static void write_other_modes(uint32_t hi, uint32_t lo)
 {
     write8((hi & 0x00FFFFFF) | 0xEF000000, lo);
     write_scissor(((uint32_t*)&Q->rdp_scissor_rect)[0], ((uint32_t*)&Q->rdp_scissor_rect)[1]);
-    finalize();
+    finalize_modes();
 }
 
 /** RDPQ_UpdateRenderMode: derive the final SOM + combiner from the mode state. */
 static void update_render_mode(void)
 {
     uint32_t som_hi = SOM_HI, som_lo = SOM_LO;
-    if (som_hi & (SOMX_UPDATE_FREEZE >> 32)) { finalize(); return; }
+    if (som_hi & (SOMX_UPDATE_FREEZE >> 32)) { finalize_modes(); return; }
 
     if (som_hi & (1u << 21)) {      // fill/copy: just the SOM
         write8((som_hi & 0x00FFFFFF) | 0xEF000000, som_lo);
-        finalize();
+        finalize_modes();
         return;
     }
 
@@ -123,7 +166,7 @@ static void update_render_mode(void)
         SOM_HI = (m->out[2] & 0x00FFFFFF) | (som_hi & 0xFF000000);
         SOM_LO = m->out[3];
         write16(m->out[0], m->out[1], m->out[2], m->out[3]);
-        finalize();
+        finalize_modes();
         return;
     }
     *m = (rm_memo_t){ .comb = MODE.combiner, .mask = MODE.combiner_mipmapmask, .hi = som_hi, .lo = som_lo,
@@ -219,7 +262,7 @@ static void update_render_mode(void)
     write16(((uint32_t)(final_comb >> 32) & 0x00FFFFFF) | 0xFC000000, (uint32_t)final_comb, som_hi, som_lo);
     m->out[0] = ((uint32_t)(final_comb >> 32) & 0x00FFFFFF) | 0xFC000000; m->out[1] = (uint32_t)final_comb;
     m->out[2] = som_hi; m->out[3] = som_lo; m->valid = true;
-    finalize();
+    finalize_modes();
 }
 
 static void set_combine(uint32_t a0, uint32_t a1)

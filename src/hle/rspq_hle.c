@@ -2022,6 +2022,12 @@ static void vrsp_run(void)
 
         uint32_t ovl_id = a0 >> 28;
         uint32_t cmd_byte = a0 >> 24;
+        // deferred rdpq mode changes go out before anything that isn't a block jump/call/return
+        // (ovl_rdpq.c); rdpq's own mode commands are let through below
+        extern bool hle_rdpq_modes_pending; extern void hle_rdpq_flush_modes(void);
+        if (__builtin_expect(hle_rdpq_modes_pending, 0) && ovl_id == 0 &&
+                cmd_byte != RSPQ_CMD_JUMP && cmd_byte != RSPQ_CMD_CALL && cmd_byte != RSPQ_CMD_RET)
+            hle_rdpq_flush_modes();
         if (ovl_id == 0) {
 #ifdef HLE_TEST_PERF
             uint32_t c0 = TICKS_READ();
@@ -2032,6 +2038,7 @@ static void vrsp_run(void)
             switch (cmd_byte) {
             case RSPQ_CMD_WRITE_WORD:
                 hle_rp_bad();
+                hle_t3d_state_changed();
                 *(uint32_t*)vrsp_dmem_addr(a0) = a[1];
                 break;
             case RSPQ_CMD_JUMP:
@@ -2080,6 +2087,7 @@ static void vrsp_run(void)
             }
             case RSPQ_CMD_DMA: {
                 hle_rp_bad();
+                hle_t3d_state_changed();
                 uint8_t *dmem = vrsp_dmem_addr(a[1]);
                 void *rdram = hle_rdram(a0);
                 uint32_t len = (a[2] & 0xFFF) + 1;
@@ -2127,6 +2135,12 @@ static void vrsp_run(void)
             vrsp_load_overlay(base);
         }
         uint32_t cmd = cmd_byte - (base << 4);
+        if (__builtin_expect(hle_rdpq_modes_pending, 0)) {
+            // rdpq mode commands: ModifyOtherModes, combiner, blending, fog, reset/push/pop
+            bool mode_cmd = vrsp_handlers[base] == ovl_rdpq &&
+                (cmd == 0x14 || cmd == 0x1B || cmd == 0x05 || cmd == 0x18 || cmd == 0x19 || cmd == 0x04 || cmd == 0x06 || cmd == 0x07);
+            if (!mode_cmd) hle_rdpq_flush_modes();
+        }
         int size = vrsp_cmdsize[base][cmd & 63];
         if (__builtin_expect(hle_rp_on, 0)) {
             if (vrsp_handlers[base] != ovl_t3d && vrsp_handlers[base] != ovl_rdpq) hle_rp_bad_();     // only these two overlays' state is saved
@@ -2161,6 +2175,7 @@ static void vrsp_run(void)
 #endif
     }
 
+    { extern void hle_rdpq_flush_modes(void); hle_rdpq_flush_modes(); }
     vsp_status |= SP_STATUS_HALTED;
     vrsp_running = false;
 #ifdef HLE_TEST_PERF

@@ -790,6 +790,36 @@ __attribute__((noinline)) static void vert_load_copy(int dest, int count, const 
 #endif
 }
 
+// What a vertex load reads from the Tiny3D state (effects, lights, fog) only changes with
+// state commands, so it is worked out once per change: hle_t3d_state_changed() bumps vl_ver.
+typedef struct { uint32_t fx, uv_ofs, amb, fogw; bool sph, unlit, lit0, lights_ok, fog_on; } vl_state_t;
+static vl_state_t vl_st;
+static uint32_t vl_ver = 1, vl_st_ver;
+void hle_t3d_state_changed(void) { vl_ver++; }
+#ifdef HLE_TEST_VL_CHECK
+uint32_t hle_vl_checked, hle_vl_wrong;
+#endif
+
+static void vl_state(vl_state_t *st)
+{
+    st->fx = VDMEM16(D(VERTEX_FX_FUNC));
+    st->sph = st->fx == (RSP_T3D_CODE_VertexFX_Spherical & 0xFFF);
+    if (!st->sph && st->fx != (RSP_T3D_CODE_LOOP_TRAIL & 0xFFF))
+        hle_warn_once("t3dfx", "Tiny3D vertex FX %04lx not supported", st->fx);
+    st->uv_ofs = VDMEM32(D(UV_GEN_PARAMS));
+    st->unlit = VDMEM8(D(TRI_COMMAND)) & 1;
+    st->amb = VDMEM32(D(COLOR_AMBIENT));
+    // a white ambient saturates the light sum (colour * min(255, 255 + ...)): nothing to light
+    st->lit0 = !st->unlit && VDMEM8(D(ACTIVE_LIGHT_SIZE)) && st->amb != 0xFFFFFFFF;
+#ifdef HLE_NO_GBI_LIGHTS    // test aid: every lit load lit on the CPU
+    st->lights_ok = false;
+#else
+    st->lights_ok = st->lit0 && lights_gbi();
+#endif
+    st->fog_on = fog_enabled();
+    st->fogw = st->fog_on ? fog_gbi() : 0;
+}
+
 __attribute__((noinline)) static void vert_load(const uint32_t *a)
 {
 #ifdef HLE_TEST_PERF
@@ -802,31 +832,34 @@ __attribute__((noinline)) static void vert_load(const uint32_t *a)
     const T3DVertPacked *src = hle_rdram(resolve_segment(a[1]));
     if (a[1] >> 24) hle_rp_bad();       // through a segment: the buffer may differ next time
 
-    uint32_t fx = VDMEM16(D(VERTEX_FX_FUNC));
-    bool sph = fx == (RSP_T3D_CODE_VertexFX_Spherical & 0xFFF);
-    if (!sph && fx != (RSP_T3D_CODE_LOOP_TRAIL & 0xFFF))
-        hle_warn_once("t3dfx", "Tiny3D vertex FX %04lx not supported", fx);
-    uint32_t uv_ofs = VDMEM32(D(UV_GEN_PARAMS));
-    if (sph) hle_rp_bad();              // view dependent
-
-    bool unlit = VDMEM8(D(TRI_COMMAND)) & 1;
-    uint32_t amb = VDMEM32(D(COLOR_AMBIENT));
-    // a white ambient saturates the light sum (colour * min(255, 255 + ...)): nothing to light
-    bool lit = !unlit && VDMEM8(D(ACTIVE_LIGHT_SIZE)) && amb != 0xFFFFFFFF;
-    bool scale = !unlit && !lit && amb != 0xFFFFFFFF;
-    // white vertices: the plugin lights them (cacheable); others are lit here
-#ifdef HLE_NO_GBI_LIGHTS    // test aid: every lit load lit on the CPU
-    bool normals = false;
-#else
-    bool normals = lit && lights_gbi() && load_white(src, count);
+    if (vl_st_ver != vl_ver) { vl_state(&vl_st); vl_st_ver = vl_ver; }
+#ifdef HLE_TEST_VL_CHECK    // test aid: worked out again for every load, compared field by field
+    {
+        vl_state_t now; vl_state(&now);
+        hle_vl_checked++;
+        if (now.fx != vl_st.fx || now.uv_ofs != vl_st.uv_ofs || now.amb != vl_st.amb || now.fogw != vl_st.fogw ||
+            now.sph != vl_st.sph || now.unlit != vl_st.unlit || now.lit0 != vl_st.lit0 ||
+            now.lights_ok != vl_st.lights_ok || now.fog_on != vl_st.fog_on) {
+            if (hle_vl_wrong++ < 5) debugf("[vlcheck] stale state (fx %x/%x amb %lx/%lx fog %lx/%lx)\n", (unsigned)now.fx, (unsigned)vl_st.fx,
+                (unsigned long)now.amb, (unsigned long)vl_st.amb, (unsigned long)now.fogw, (unsigned long)vl_st.fogw);
+            vl_st = now;
+        }
+    }
 #endif
+    bool sph = vl_st.sph;
+    uint32_t uv_ofs = vl_st.uv_ofs, amb = vl_st.amb;
+    if (sph) hle_rp_bad();              // view dependent
+    bool lit = vl_st.lit0;
+    bool scale = !vl_st.unlit && !lit && amb != 0xFFFFFFFF;
+    // white vertices: the plugin lights them (cacheable); others are lit here
+    bool normals = vl_st.lights_ok && load_white(src, count);
     if (normals) { lit = false; hle_rp_bad(); }     // the lights change between frames
     gsp_3d.lit = normals;
     if (lit) light_setup();
 
     VL_MARK(4);
-    bool fog = fog_enabled();
-    gsp_3d.fog = fog ? fog_gbi() : 0;
+    bool fog = vl_st.fog_on;
+    gsp_3d.fog = vl_st.fogw;
     if (gsp_3d.fog) fog = false;
     int64_t k[4] = {0};
     if (fog) fog_plane(k);
@@ -1056,6 +1089,9 @@ static int tri_run_convert(const uint32_t *a, uint32_t cmd_byte)
 void ovl_t3d(uint32_t cmd, const uint32_t *a, int n)
 {
     hle_t3d_flush();
+    if (cmd != T3D_CMD_VERT_LOAD && cmd != T3D_CMD_MATRIX_STACK && cmd != T3D_CMD_TRI_SYNC &&
+            cmd != T3D_CMD_TRI_STRIP && cmd != T3D_CMD_TRI_SEQ && cmd != T3D_CMD_TRI_DRAW)
+        vl_ver++;                       // anything else may change what vertex loads read
 
     switch (cmd) {
     case T3D_CMD_SCREEN_SIZE:
