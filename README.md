@@ -1,5 +1,19 @@
 # Jam entry
 
+## Playing on Delta and other HLE emulators
+
+This fork adds a build for phone and desktop emulators that can't run libdragon's microcode
+(Delta on iPhone, Mupen64Plus with GLideN64). Grab it from the Releases page:
+
+- `junkrunner64-hle.z64`: runs at 60 fps where the emulator keeps up (Delta, Mupen64Plus)
+- `junkrunner64-hle-30hz.z64`: the original 30 fps, if the 60 fps one slows down on your device
+- `junkrunner64.z64`: for real consoles (flashcart) and accurate emulators like ares
+
+The HLE ROMs don't run on real hardware. Build them with `make HLE=1 junkrunner64-hle.z64`
+(add `HLE_HZ=30` for the 30 fps one). They use the HLE backend from
+[Pandemonium](https://github.com/cbyeh/Pandemonium) in `src/hle/`, and the newer tiny3d
+(October 2026) and libdragon preview (`39d0d60`).
+
 # Building
 
 ## Using docker
