@@ -353,6 +353,14 @@ int main(void)
     #endif
     #ifdef JR_DEBUG     // test aid: the player's position every game second (compare 30/60 Hz runs)
             {
+#ifdef JR_TELEPORT     // test aid: put the player at JR_TELEPORT (x, y, z) half a second in
+                static bool moved;
+                if (current_scene && !moved && total_time >= 0.5f) {
+                    struct Vector3 to = { JR_TELEPORT };
+                    *player_get_position(&current_scene->player) = to;
+                    moved = true;
+                }
+#endif
                 static float next_log = 1.0f;
                 if (current_scene && total_time >= next_log) {
                     struct Vector3* p = player_get_position(&current_scene->player);

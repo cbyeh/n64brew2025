@@ -49,7 +49,7 @@ void z_clear_init() {
 }
 
 void z_clear_dithered(surface_t* z_buffer) {
-#ifdef HLE_BUILD
+#if defined(HLE_BUILD) && !defined(JR_ZCLEAR_DITHER)    // JR_ZCLEAR_DITHER: test aid, the original
     // HLE plugins only treat a fill into the Z buffer as a depth clear: the dithered
     // pattern below left Delta's depth buffer uncleared (near terrain drew black)
     rdpq_clear_z(ZBUF_MAX);

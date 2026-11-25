@@ -103,6 +103,12 @@ static void draw(uint32_t a0, uint32_t a1, bool textured)
 
         int depth = 0x3FFF + (int)(cz * inv * 0x3FFF);
         depth = depth < 0 ? 0 : depth > 0x7FFF ? 0x7FFF : depth;
+#ifdef HLE_TEST_TPX_NEAR    // test aid: particles at the nearest depth (never hidden)
+        depth = 0;
+#endif
+#ifdef HLE_TEST_TPX_FILL    // test aid: particles as plain colour squares
+        textured = false;
+#endif
         int n = 0;
         out[n++] = 0xFA000000;
         out[n++] = ((uint32_t)col[0] << 24) | (col[1] << 16) | (col[2] << 8) | col[3];

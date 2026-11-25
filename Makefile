@@ -16,6 +16,7 @@ N64_C_AND_CXX_FLAGS += $(if $(filter 1,$(HLE)),-O2 -fno-strict-aliasing -Wno-err
 N64_C_AND_CXX_FLAGS += $(if $(JR_DEBUG),-DJR_DEBUG)
 # JR_START=<scene>: start there instead of the main menu (emulator test runs)
 N64_C_AND_CXX_FLAGS += $(if $(JR_START),-DJR_START='"$(JR_START)"')
+N64_C_AND_CXX_FLAGS += $(if $(JR_TELEPORT),-DJR_TELEPORT='$(JR_TELEPORT)')
 
 all: junkrunner64.z64
 .PHONY: all

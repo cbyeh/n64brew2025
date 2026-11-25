@@ -249,6 +249,10 @@ void repair_part_pickup_init(repair_part_pickup_t* part, struct repair_part_pick
     repair_part_type_def_t* def = &types[definition->part_type];
 
     part->is_particle = def->particle_radius > 0.0f;
+#ifdef JR_DEBUG
+    debugf("[pickup] type %d %s at %.2f %.2f %.2f\n", definition->part_type, part->is_particle ? "sprite" : def->mesh_name,
+        definition->position.x, definition->position.y, definition->position.z);
+#endif
 
     if (part->is_particle) {
         renderable_init_point(&part->renderable, &part->transform.position, def->particle_radius, def->particle_material);
