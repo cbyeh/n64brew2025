@@ -134,6 +134,8 @@ static inline void gsp_3d_proj(const hle_mat4_t *m) { gsp_3d.proj = m; gsp_3d.pr
 void gsp_sync_3d(void);
 /** Switches to a pixel-space ortho camera for 2D triangles. */
 void gsp_sync_2d(uint32_t geom, uint32_t tex);
+/** gsp_sync_2d with vertex z mapped to clip z: z_ndc = ob.z * zscale (particles with real depth). */
+void gsp_sync_2d_z(uint32_t geom, uint32_t tex, float zscale);
 /** Emits a float matrix as G_MTX (LOAD/NOPUSH) with the given G_MTX_MODELVIEW/PROJECTION. */
 void gbi_mtx(const hle_mat4_t *m, uint32_t which);
 

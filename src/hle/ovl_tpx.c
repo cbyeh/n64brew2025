@@ -9,6 +9,7 @@
 #include "rsp/rsp_tinypx.h"
 #include "rspq_internal.h"
 #include "hle.h"
+#include "gbi.h"
 
 #define D(sym)  (RSP_TPX_##sym & 0xFFF)
 #define Q       ((rsp_queue_t*)__vrsp_dmem)
@@ -43,6 +44,34 @@ static void sync_t3d(uint32_t w_norm)
     update_mvp();
 }
 
+/** A particle as two screen-space triangles (corners in 1/4 px, UVs in texels). */
+static uint32_t quad_epoch;     // gsp_epoch of the 2D camera the quads use (reset per draw)
+static void quad(int x0, int y0, int x1, int y1, float s0, float t0, float s1, float t1, bool textured, const uint8_t *col, float zndc)
+{
+    if (quad_epoch != gsp_epoch) {          // once per draw, again after a task split
+        // tile 0; the mip levels as the 3D path sets them (sync_state in ovl_t3d.c)
+        uint32_t levels = (((uint32_t*)&Q->rdp_mode.other_modes)[0] >> 24 & 0x38) >> 3;
+        gsp_sync_2d_z(G_ZBUFFER, textured ? ((levels << 11) | (1 << 1)) : 0, 1.0f / 32767.0f);
+        quad_epoch = gsp_epoch;
+    }
+    // GLideN64 halves triangle UVs when texture perspective is off (particles turn it off)
+    bool persp = ((uint32_t*)&Q->rdp_mode.other_modes)[0] & (1u << 19);
+    float tcs = persp ? 32.0f : 64.0f;
+    int16_t z = (int16_t)(zndc * 32767.0f);
+    gbi_reserve(2, 4 * sizeof(gbi_vtx_t));
+    gbi_vtx_t *v = gbi_alloc(4 * sizeof(gbi_vtx_t));
+    int xs[4] = { x0, x1, x1, x0 }, ys[4] = { y0, y0, y1, y1 };
+    float ss[4] = { s0, s1, s1, s0 }, ts[4] = { t0, t0, t1, t1 };
+    for (int i = 0; i < 4; i++) {
+        v[i].ob[0] = xs[i]; v[i].ob[1] = ys[i]; v[i].ob[2] = z; v[i].flag = 0;
+        v[i].tc[0] = (int16_t)(ss[i] * tcs); v[i].tc[1] = (int16_t)(ts[i] * tcs);
+        v[i].cn[0] = col[0]; v[i].cn[1] = col[1]; v[i].cn[2] = col[2]; v[i].cn[3] = col[3];
+    }
+    // high slots, so Tiny3D's vertex cache (0..69) survives
+    GBI_VTX(76, 4, PhysicalAddr(v));
+    gbi((uint32_t)G_TRI2 << 24 | GBI_TRI_IDX(76, 77, 78), GBI_TRI_IDX(76, 78, 79));
+}
+
 static void draw(uint32_t a0, uint32_t a1, bool textured)
 {
     bool s16 = (int32_t)a1 < 0;
@@ -69,6 +98,14 @@ static void draw(uint32_t a0, uint32_t a1, bool textured)
     }
 
     uint32_t out[8];
+    quad_epoch = gsp_epoch - 1;
+#ifndef HLE_TPX_TEXRECT
+    bool zprim = ((uint32_t*)&Q->rdp_mode.other_modes)[1] & 4;    // G_ZS_PRIM
+    if (zprim) { gbi_reserve(1, 0); gbi(0xE2001D00, 0); }            // G_SETOTHERMODE_L zsrc = pixel
+#endif
+#ifdef HLE_LOG_TPX
+    { static int n; if (n++ < 6) debugf("[tpx] comb %016llx som %016llx tex %d\n", (unsigned long long)Q->rdp_mode.combiner, (unsigned long long)Q->rdp_mode.other_modes, textured); }
+#endif
     for (int i = 0; i < count; i++) {
         const uint8_t *pt = in + (i >> 1) * stride;
         float x, y, z; int size, toff; const uint8_t *col;
@@ -114,6 +151,23 @@ static void draw(uint32_t a0, uint32_t a1, bool textured)
         out[n++] = ((uint32_t)col[0] << 24) | (col[1] << 16) | (col[2] << 8) | col[3];
         out[n++] = 0xEE000000;
         out[n++] = (uint32_t)depth << 16;
+#ifndef HLE_TPX_TEXRECT
+        // As two screen-space triangles with a real per-vertex depth (Z source switched
+        // to pixel around the quads). Prim depth needs fragment depth writes, which
+        // GLideN64 turns off on iOS/Android: there the particles sank behind the scene.
+        vrsp_rdpq_send(out, 2 * 4);             // prim colour only
+        float s0 = 0, t0 = 0, s1 = 0, t1 = 0;
+        if (textured) {
+            float span_x = (x1 - x0) / 4.0f, span_y = (y1 - y0) / 4.0f;
+            float dsdx = span_x > 0 ? 8.0f / span_x : 0, dtdy = span_y > 0 ? 8.0f / span_y : 0;
+            s0 = (toff * 8 + tex_offset / 4.0f) + (cx0 - x0) / 4.0f * dsdx;
+            t0 = (cy0 - y0) / 4.0f * dtdy;
+            s1 = s0 + (cx1 - cx0) / 4.0f * dsdx;
+            t1 = t0 + (cy1 - cy0) / 4.0f * dtdy;
+        }
+        quad(cx0, cy0, cx1, cy1, s0, t0, s1, t1, textured, col, cz * inv);
+        continue;
+#endif
         if (!textured) {
             out[n++] = 0xF6000000 | (cx1 << 12) | cy1;
             out[n++] = (cx0 << 12) | cy0;
@@ -130,6 +184,9 @@ static void draw(uint32_t a0, uint32_t a1, bool textured)
         }
         vrsp_rdpq_send(out, n * 4);
     }
+#ifndef HLE_TPX_TEXRECT
+    if (zprim) { gbi_reserve(1, 0); gbi(0xE2001D00, 4); }            // back to G_ZS_PRIM
+#endif
 }
 
 void ovl_tpx(uint32_t cmd, const uint32_t *a, int n)

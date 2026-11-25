@@ -232,7 +232,9 @@ void gsp_sync_3d(void)
 
 static int cimg_width(void) { return ((last_cimg >> 32) & 0x3FF) + 1; }
 
-void gsp_sync_2d(uint32_t geom, uint32_t tex)
+void gsp_sync_2d(uint32_t geom, uint32_t tex) { gsp_sync_2d_z(geom, tex, 1.0f); }
+
+void gsp_sync_2d_z(uint32_t geom, uint32_t tex, float zscale)
 {
     hle_t3d_flush();
     gbi_reserve(8, 2*sizeof(gbi_mtx_t) + 16);
@@ -241,7 +243,7 @@ void gsp_sync_2d(uint32_t geom, uint32_t tex)
     int h = ((last_scissor & 0xFFF) >> 2);
     if (h <= 0) h = 240;
     float sx = 2.0f / (w * 4), sy = -2.0f / (h * 4);
-    float mf[4][4] = {{sx,0,0,0},{0,sy,0,0},{0,0,1,0},{-1,1,0,1}};
+    float mf[4][4] = {{sx,0,0,0},{0,sy,0,0},{0,0,zscale,0},{-1,1,0,1}};
     gbi_mtx_t *m = gbi_alloc(sizeof(gbi_mtx_t));
     gbi_mtx_t *id = gbi_alloc(sizeof(gbi_mtx_t));
     for (int r = 0; r < 4; r++) for (int c = 0; c < 4; c++) {
