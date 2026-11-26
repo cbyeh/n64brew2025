@@ -3,7 +3,7 @@
  * Linked with --wrap on the joypad getters when JR_AUTOPLAY=<script> is given to make.
  *
  * A script is a list of "start-end:keys[@x,y]" steps in polled frames (joypad_poll calls),
- * e.g. "1900-1905:A;2400-2600:@0,80". Keys: A B Z S(tart) L R and u d l r (D-pad).
+ * e.g. "1900-1905:A;2400-2600:@0,80". Keys: A B Z S(tart) L R, u d l r (D-pad), 8 2 4 6 (C).
  * Later steps win where they overlap. Every emulated second the frame rate goes to the log.
  */
 #include <libdragon.h>
@@ -33,6 +33,8 @@ static void parse(void) {
             case 'Z': s->keys.z = 1; break;       case 'S': s->keys.start = 1; break;
             case 'L': s->keys.l = 1; break;       case 'R': s->keys.r = 1; break;
             case 'u': s->keys.d_up = 1; break;    case 'd': s->keys.d_down = 1; break;
+            case '8': s->keys.c_up = 1; break;    case '2': s->keys.c_down = 1; break;
+            case '4': s->keys.c_left = 1; break;  case '6': s->keys.c_right = 1; break;
             case 'l': s->keys.d_left = 1; break;  case 'r': s->keys.d_right = 1; break;
         }
         if (*p == '@') {

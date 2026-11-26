@@ -855,7 +855,11 @@ __attribute__((noinline)) static void vert_load(const uint32_t *a)
     const T3DVertPacked *src = hle_rdram(resolve_segment(a[1]));
     if (a[1] >> 24) hle_rp_bad();       // through a segment: the buffer may differ next time
 
+#ifdef HLE_NO_VL_CACHE          // test aid: read the state for every load, as before
+    vl_state(&vl_st);
+#else
     if (vl_st_ver != vl_ver) { vl_state(&vl_st); vl_st_ver = vl_ver; }
+#endif
 #ifdef HLE_TEST_VL_CHECK    // test aid: worked out again for every load, compared field by field
     {
         vl_state_t now; vl_state(&now);
