@@ -536,9 +536,21 @@ static vc_ent_t *vc_find_any(uint32_t src, uint32_t bytes, uint32_t key)
         if (!e->out) {
             if (vc_reset_pending) return NULL;
             e->src = src; e->uv = key; e->amb = key; e->bytes = bytes;
+#ifdef HLE_TEST_VCACHE_VERIFY
+            e->sum = vc_sum(src, bytes);
+#endif
             return e;
         }
-        if (e->src == src && e->uv == key && e->amb == key && e->bytes == bytes) return e;
+        if (e->src == src && e->uv == key && e->amb == key && e->bytes == bytes) {
+#ifdef HLE_TEST_VCACHE_VERIFY   // test aid: the triangle commands must be what was cached
+            hle_vc_verify_hits++;
+            if (e->out && vc_sum(src, bytes) != e->sum) {
+                if (hle_vc_verify_bad++ < 10) debugf("[vcache] CHANGED since cached: %06lx +%lu (triangle run)\n", src, bytes);
+                e->sum = vc_sum(src, bytes);
+            }
+#endif
+            return e;
+        }
     }
     return NULL;
 }

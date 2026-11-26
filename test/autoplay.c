@@ -101,6 +101,48 @@ void __wrap_joypad_poll(void) {
         held.raw |= steps[i].keys.raw;
         if (steps[i].x || steps[i].y) { stick_x = steps[i].x; stick_y = steps[i].y; }
     }
+#ifdef JR_CYCLE     // test aid: a long session: JR_CYCLE rounds of scenes, then the boat switch puzzle, dragged
+    {
+        extern float total_time;
+        extern void scene_queue_next(const char* scene_name);
+        static const char *cyc[] = {
+            "rom:/scenes/overworld.scene#default", "rom:/scenes/store.scene#default",
+            "rom:/scenes/overworld.scene#default", "rom:/scenes/inside_house.scene#default",
+            "rom:/scenes/settlement_house1_inside.scene#default", "rom:/scenes/overworld.scene#default",
+            "rom:/scenes/garage.scene#default", "rom:/repair/motorycle_engine.repair",
+            "rom:/scenes/overworld.scene#default", "rom:/scenes/waterfall_cave.scene#default",
+            "rom:/scenes/inside_boat.scene#default", "rom:/scenes/settlement_house2_inside.scene#default",
+        };
+        const int n = sizeof(cyc) / sizeof(cyc[0]);
+        static int idx; static float next = 5.0f, final_t = -1.0f;
+        if (final_t < 0 && total_time >= next) {
+            if (idx < n * JR_CYCLE) {
+                debugf("[cycle] %d: %s at %.1f s\n", idx, cyc[idx % n], total_time);
+                scene_queue_next(cyc[idx++ % n]);
+                next = total_time + 20.0f;
+            } else {
+                debugf("[cycle] final: boat switch at %.1f s\n", total_time);
+                scene_queue_next("rom:/repair/boat_switch.repair");
+                final_t = total_time;
+            }
+        }
+        if (final_t < 0) {          // wander: walk or drive forward, turning, A now and then (dialogs)
+            stick_x = 20; stick_y = 80;
+            if ((frame % 180) < 4) held.a = 1;
+        } else {                    // grab the switch, rotate it, drag it across the board
+            float t = total_time - final_t;
+            held = (joypad_buttons_t){0}; stick_x = stick_y = 0;
+            if (t > 2.0f && t < 2.18f) { stick_x = -70; stick_y = 60; }
+            if (t > 2.4f && t < 2.47f) held.a = 1;
+            if (t > 2.7f && t < 2.77f) held.c_right = 1;
+            if (t > 3.3f && t < 3.37f) held.c_up = 1;
+            if (t > 3.8f && t < 6.3f) { stick_x = 45; }
+            if (t > 6.5f && t < 8.2f) { stick_y = -50; }
+            if (t > 8.4f && t < 8.47f) held.c_left = 1;
+            if (t > 8.8f && t < 10.8f) { stick_x = -45; stick_y = 30; }
+        }
+    }
+#endif
 }
 
 joypad_buttons_t __wrap_joypad_get_buttons(joypad_port_t port) { return port ? (joypad_buttons_t){0} : held; }
